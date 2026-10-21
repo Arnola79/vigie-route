@@ -14,6 +14,7 @@ jobs:
         run: |
           mkdir build
           unzip -q projet.zip -d build
+          sed -i 's/abandonAudioFocus(focus)/abandonAudioFocusRequest(focus)/' build/app/src/main/java/fr/vigie/route/Sound.java
           cp index.html build/app/src/main/assets/index.html
           echo "https://raw.githubusercontent.com/${{ github.repository }}/main/index.html" > build/app/src/main/assets/update_url.txt
       - uses: actions/setup-java@v4
