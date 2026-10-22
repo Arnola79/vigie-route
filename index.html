@@ -192,7 +192,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v14</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v15</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -397,7 +397,7 @@ function setGps(state,acc){
 function beginTrip(demo){
   S.mode=demo?'demo':'live';
   S.last=null;S.speed=0;S.heading=null;S.zoneState={};S.zoneInfo={level:'none'};S.curLimitZone=false;S.lastBeepAt=0;S.limSrc=demo?'demo':'inconnue';
-  A.ways=[];A.cams=[];A.cur={lim:null,est:false,key:null,road:null};A.pendKey=undefined;A.pc=0;A.warned=false;T.key=null;T.planAt=0;T.retryAt=0;
+  A.ways=[];A.cams=[];A.pl=[];A.cur={lim:null,est:false,key:null,road:null};A.pendKey=undefined;A.pc=0;A.warned=false;T.key=null;T.planAt=0;T.retryAt=0;
   var t0=now();
   S.trip={id:t0,start:t0,end:null,demo:demo,dist:0,movingMs:0,max:0,overMs:0,events:[],cur:null,lastOverT:0,pts:[],zs:{},lastT:t0};
   S.tick=setInterval(function(){if(S.mode==='live'){renderStats();checkLost();activeSaveMaybe()}},1000);
@@ -692,17 +692,18 @@ function loadMem(key){
   }).catch(function(){T.loading[key]=false});
 }
 function rebuildActive(f){
-  var i0=Math.floor(f.lat/TL),j0=Math.floor(f.lon/TG),want={},ways=[],cams=[],seenW={},seenC={},now=Date.now();
+  var i0=Math.floor(f.lat/TL),j0=Math.floor(f.lon/TG),want={},ways=[],cams=[],pls=[],seenW={},seenC={},seenP={},now=Date.now();
   for(var di=-1;di<=1;di++){for(var dj=-1;dj<=1;dj++){
     var k=(i0+di)+'_'+(j0+dj),t=T.mem[k];want[k]=1;
     if(t){
       if(T.idx[k])T.idx[k].u=now;
       t.ways.forEach(function(w){if(!seenW[w.id]){seenW[w.id]=1;ways.push(w)}});
       t.cams.forEach(function(c){if(!seenC[c.id]){seenC[c.id]=1;cams.push(c)}});
+      (t.pl||[]).forEach(function(q){var kk=q[2]+q[0];if(!seenP[kk]){seenP[kk]=1;pls.push(q)}});
     }else loadMem(k);
   }}
   Object.keys(T.mem).forEach(function(k){if(!want[k])delete T.mem[k]});
-  A.ways=ways;A.cams=cams;T.key=i0+'_'+j0;
+  A.ways=ways;A.cams=cams;A.pl=pls;T.key=i0+'_'+j0;
   saveIdx();renderOffline();
 }
 function planPrefetch(f,ring,ahead){
@@ -886,6 +887,8 @@ function renderTrace(){
   var spanX=Math.max(300,(maxLo-minLo)*kx),spanY=Math.max(300,(maxLa-minLa)*ky),pad=24;
   var sc=Math.min((w-2*pad)/spanX,(h-2*pad)/spanY);
   function P(la,lo){return [w/2+(lo-lo0)*kx*sc,h/2-(la-la0)*ky*sc]}
+  var lbase=(A.ways&&A.ways.length&&S.mode!=='idle')?{ways:A.ways,pl:A.pl||[]}:null,lvis=null;
+  if(lbase){try{lvis=baseRoads(ctx,lbase,P,w,h,C)}catch(e){lbase=null}}
   ctx.lineCap='round';ctx.lineJoin='round';ctx.lineWidth=3.5;
   var prevP=P(pts[0][0],pts[0][1]);
   for(i=1;i<pts.length;i++){
@@ -900,6 +903,12 @@ function renderTrace(){
   });
   var cp=P(cur.lat,cur.lon);
   ctx.beginPath();ctx.arc(cp[0],cp[1],6.5,0,Math.PI*2);ctx.fillStyle=C('--fg');ctx.fill();ctx.lineWidth=2.5;ctx.strokeStyle=C('--accent');ctx.stroke();
+  if(lbase){
+    var lb=[[w-60,4,w-2,28],[2,h-34,150,h-2],[cp[0]-10,cp[1]-10,cp[0]+10,cp[1]+10]];
+    for(i=0;i<pts.length;i+=2){var tq=P(pts[i][0],pts[i][1]);lb.push([tq[0]-7,tq[1]-7,tq[0]+7,tq[1]+7])}
+    near.forEach(function(z){var zq=P(z.lat,z.lon);lb.push([zq[0]-11,zq[1]-12,zq[0]+11,zq[1]+9])});
+    try{baseLabels(ctx,lbase,lvis,P,w,h,C,lb)}catch(e){}
+  }
   var steps=[50,100,200,500,1000,2000,5000],len=steps[0];
   steps.forEach(function(s){if(s*sc<=w*0.3)len=s});
   var bw=len*sc;ctx.strokeStyle=C('--fg-dim');ctx.lineWidth=2;ctx.lineCap='butt';
@@ -975,6 +984,23 @@ function baseLabels(ctx,base,vis,P,w,h,C,boxes){
     if(n>=14)return;var pt=P(q[0],q[1]),big=q[3]==='city'||q[3]==='town';
     if(label(q[2],pt[0],pt[1],(big?'700 13px':'600 11px')+' Barlow, system-ui, sans-serif',C('--fg')))n++;
   });
+  var seenN={},nm=0;
+  vis.slice().reverse().forEach(function(v){
+    if(nm>=30)return;var name=v.wy.tags.name;if(!name||seenN[name])return;
+    var best=null,bl=0,k;
+    for(k=1;k<v.pp.length;k++){
+      var a=v.pp[k-1],b=v.pp[k],dx=b[0]-a[0],dy=b[1]-a[1],L=Math.sqrt(dx*dx+dy*dy),mx=(a[0]+b[0])/2,my=(a[1]+b[1])/2;
+      if(mx<10||mx>w-10||my<10||my>h-10)continue;
+      if(L>bl){bl=L;best=[mx,my,Math.atan2(dy,dx)]}
+    }
+    if(!best)return;
+    ctx.font='500 10px Barlow, system-ui, sans-serif';var tw=ctx.measureText(name).width;if(tw+8>bl)return;
+    var ang=best[2];if(ang>Math.PI/2||ang<-Math.PI/2)ang+=Math.PI;
+    var hw=(Math.abs(Math.cos(ang))*tw+Math.abs(Math.sin(ang))*10)/2+2,hh=(Math.abs(Math.sin(ang))*tw+Math.abs(Math.cos(ang))*10)/2+2;
+    var r=[best[0]-hw,best[1]-hh,best[0]+hw,best[1]+hh];if(!free(r))return;
+    boxes.push(r);seenN[name]=1;nm++;
+    ctx.save();ctx.translate(best[0],best[1]);ctx.rotate(ang);ctx.lineWidth=3;ctx.strokeStyle=C('--surface-2');ctx.strokeText(name,0,0);ctx.fillStyle=C('--fg-dim');ctx.fillText(name,0,0);ctx.restore();
+  });
   var seen={},rn=0;
   vis.slice().reverse().forEach(function(v){
     if(rn>=10||(v.cls!=='motorway'&&v.cls!=='trunk'&&v.cls!=='primary'&&v.cls!=='secondary'))return;
@@ -1043,7 +1069,7 @@ function drawTripMap(cv,t,base){
     pp.forEach(function(q,ix){if(ix%2===0)boxes.push([q[0]-7,q[1]-7,q[0]+7,q[1]+7])});
     zs.forEach(function(z){var q=P(z[0],z[1]);boxes.push([q[0]-11,q[1]-12,q[0]+11,q[1]+9])});
     evs.forEach(function(e){if(isFinite(e.lat)){var q=P(e.lat,e.lon);boxes.push([q[0]-10,q[1]-25,q[0]+10,q[1]+2])}});
-    baseLabels(ctx,base,vis,P,w,h,C,boxes);
+    try{baseLabels(ctx,base,vis,P,w,h,C,boxes)}catch(e){}
   }
   var steps=[50,100,200,500,1000,2000,5000,10000,20000],len=steps[0];
   steps.forEach(function(v){if(v*sc<=w*0.3)len=v});
