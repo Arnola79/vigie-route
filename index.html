@@ -213,6 +213,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 .rt-opt{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;text-align:left;padding:12px 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--fg);font:inherit;cursor:pointer;width:100%}
 .rt-opt[aria-pressed="true"]{border-color:var(--accent);background:var(--surface-2);box-shadow:inset 3px 0 0 var(--accent)}
 .rt-opt .t{font:700 28px/1 var(--font-num);font-variant-numeric:tabular-nums}
+.rt-opt .tag.toll{background:var(--warn)}
 .rt-opt .tag{align-self:center;justify-self:end;font-size:11px;letter-spacing:.07em;text-transform:uppercase;font-weight:700;color:var(--accent-ink);background:var(--ok);border-radius:6px;padding:3px 8px}
 .rt-opt .m{grid-column:1/-1;font-size:13px;color:var(--fg-dim);font-variant-numeric:tabular-nums}
 .rt-map{width:100%;height:300px;display:block;border-radius:10px;background:var(--surface-2);border:1px solid var(--line)}
@@ -229,7 +230,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v21</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v22</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -352,6 +353,10 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
       <div class="cap">
         <label>Plafond de vitesse (km/h)<input type="number" id="rtCap" inputmode="numeric" min="60" max="130" step="5" value="110"></label>
         <button class="btn primary" type="button" id="rtGo">Calculer</button>
+      </div>
+      <div class="cap">
+        <label>Temps ajouté accepté pour éviter les péages (min)<input type="number" id="rtExtra" inputmode="numeric" min="0" max="600" step="10" value="60"></label>
+        <span class="hint" style="padding:0;border:0;font-size:12px">0 = ignorer les péages</span>
       </div>
     </div>
     <div class="card rt-sum" id="rtSum" hidden></div>
@@ -1570,7 +1575,7 @@ var VALHALLA='https://valhalla1.openstreetmap.de/route';
 var PHOTON='https://photon.komoot.io/api/';
 var NOMINATIM='https://nominatim.openstreetmap.org/search';
 var RT={routes:[],sel:0,a:null,b:null,cap:110,free:null,tok:0,tiles:{}};
-(function(){var q=LS.get('rtq',null);if(q&&typeof q==='object'){$('rtFrom').value=String(q.from||'').slice(0,120);$('rtTo').value=String(q.to||'').slice(0,120);var c=Math.round(num(q.cap));if(c>=60&&c<=130)$('rtCap').value=c}})();
+(function(){var q=LS.get('rtq',null);if(q&&typeof q==='object'){$('rtFrom').value=String(q.from||'').slice(0,120);$('rtTo').value=String(q.to||'').slice(0,120);var c=Math.round(num(q.cap));if(c>=60&&c<=130)$('rtCap').value=c;var x=Math.round(num(q.extra));if(x>=0&&x<=600)$('rtExtra').value=x}})();
 
 function decodeP6(str){
   var pts=[],i=0,lat=0,lon=0,n=str.length,b,sh,r;
@@ -1625,11 +1630,12 @@ function parseTrip(t){
     pts=pts.concat(decodeP6(l.shape||''));
     (l.maneuvers||[]).forEach(function(m){if(m.instruction)man.push({txt:m.instruction,len:m.length||0})});
   });
-  return {time:t.summary.time,len:t.summary.length,pts:pts,man:man};
+  return {time:t.summary.time,len:t.summary.length,toll:!!t.summary.has_toll,pts:pts,man:man};
 }
-function valhalla(a,b,cap,alts){
+function valhalla(a,b,cap,alts,noToll){
   var req={locations:[{lat:a.lat,lon:a.lon},{lat:b.lat,lon:b.lon}],costing:'auto',directions_options:{language:'fr-FR',units:'kilometers'}};
-  if(cap)req.costing_options={auto:{top_speed:cap}};
+  var co={};if(cap)co.top_speed=cap;if(noToll){co.use_tolls=0;co.use_highways=0.5}
+  if(cap||noToll)req.costing_options={auto:co};
   if(alts)req.alternates=alts;
   return fetchJson(VALHALLA+'?json='+encodeURIComponent(JSON.stringify(req)),30000).then(function(j){
     if(!j||!j.trip)throw new Error((j&&j.error)||'Aucun itinéraire trouvé.');
@@ -1650,17 +1656,29 @@ function rtCompute(){
   var from=$('rtFrom').value.trim(),to=$('rtTo').value.trim(),cap=Math.round(num($('rtCap').value));
   if(!to){toast('Saisissez une arrivée.');return}
   if(!(cap>=60&&cap<=130)){toast('Plafond entre 60 et 130 km/h.');return}
-  LS.set('rtq',{from:from,to:to,cap:cap});
+  var extra=Math.max(0,Math.min(600,Math.round(num($('rtExtra').value))||0));
+  LS.set('rtq',{from:from,to:to,cap:cap,extra:extra});
   var tok=++RT.tok,go=$('rtGo');go.disabled=true;go.textContent='Calcul…';
   rtSum('Recherche de l\'itinéraire…');
   var pa=(!from||/^ma position$/i.test(from))?herePos():geocode(from);
   Promise.all([pa,geocode(to)]).then(function(ab){
     if(tok!==RT.tok)return;
     var a=ab[0],b=ab[1];
-    return Promise.all([valhalla(a,b,cap,2),valhalla(a,b,null,0).catch(function(){return null})]).then(function(r){
+    return Promise.all([valhalla(a,b,cap,2),valhalla(a,b,null,0).catch(function(){return null}),extra>0?valhalla(a,b,cap,1,true).catch(function(){return null}):Promise.resolve(null)]).then(function(r){
       if(tok!==RT.tok)return;
-      var rs=r[0].slice().sort(function(x,y){return x.time-y.time});
-      RT.a=a;RT.b=b;RT.cap=cap;RT.routes=rs;RT.sel=0;RT.free=r[1]&&r[1][0]||null;
+      var rs=r[0].slice();
+      (r[2]||[]).forEach(function(x){if(!rs.some(function(y){return Math.abs(y.time-x.time)<30&&Math.abs(y.len-x.len)<0.5}))rs.push(x)});
+      rs.sort(function(x,y){return x.time-y.time});
+      var fast=rs[0],rec=fast,note='';
+      if(extra>0&&fast.toll){
+        var free=rs.filter(function(x){return !x.toll}).sort(function(x,y){return x.time-y.time})[0];
+        if(free){var d=Math.round((free.time-fast.time)/60);
+          if(d*60<=extra*60){rec=free;note='Sans péage : +'+d+' min seulement, dans votre limite de '+extra+' min.'}
+          else note='Le trajet sans péage coûte +'+d+' min, au-delà de vos '+extra+' min : le plus rapide est conseillé.'}
+        else note='Aucun trajet entièrement sans péage trouvé.';
+      }
+      rs=[rec].concat(rs.filter(function(x){return x!==rec}));
+      RT.a=a;RT.b=b;RT.cap=cap;RT.extra=extra;RT.note=note;RT.fast=fast;RT.routes=rs;RT.sel=0;RT.free=r[1]&&r[1][0]||null;
       rtShow();
     });
   }).catch(function(e){if(tok===RT.tok){RT.routes=[];rtShow();rtSum(esc(rtErr(e)),true)}})
@@ -1670,13 +1688,13 @@ function rtShow(){
   var rs=RT.routes,box=$('rtOpts');
   $('rtMap').hidden=!rs.length;$('rtDet').hidden=!rs.length;
   if(!rs.length){box.innerHTML='';return}
-  rtSum('<span><b>'+esc(RT.a.name)+'</b> → <b>'+esc(RT.b.name)+'</b></span><span>Plafond '+RT.cap+' km/h'+(RT.free?' · sans plafond : '+fmtHM(RT.free.time)+', '+Math.round(RT.free.len)+' km':'')+'</span>');
+  rtSum('<span><b>'+esc(RT.a.name)+'</b> → <b>'+esc(RT.b.name)+'</b></span><span>Plafond '+RT.cap+' km/h'+(RT.free?' · sans plafond : '+fmtHM(RT.free.time)+', '+Math.round(RT.free.len)+' km':'')+'</span>'+(RT.note?'<span><b>'+esc(RT.note)+'</b></span>':''));
   box.innerHTML=rs.map(function(r,i){
     var avg=r.time>0?Math.round(r.len/(r.time/3600)):0;
     var d=RT.free?Math.round((r.time-RT.free.time)/60):null;
     var cmp=d==null?'':d<=0?' · aussi rapide que sans plafond':' · +'+d+' min par rapport à sans plafond';
-    return '<button type="button" class="rt-opt" data-i="'+i+'" aria-pressed="'+(i===RT.sel)+'"><span class="t">'+fmtHM(r.time)+'</span>'+(i===0?'<span class="tag">Meilleur</span>':'<span></span>')+
-      '<span class="m">'+(Math.round(r.len*10)/10).toString().replace('.',',')+' km · '+avg+' km/h de moyenne'+cmp+'</span></button>';
+    return '<button type="button" class="rt-opt" data-i="'+i+'" aria-pressed="'+(i===RT.sel)+'"><span class="t">'+fmtHM(r.time)+'</span>'+(i===0?'<span class="tag'+(r.toll?' toll':'')+'">'+(RT.extra>0&&r!==RT.fast?'Recommandé':'Meilleur')+'</span>':'<span></span>')+
+      '<span class="m">'+(Math.round(r.len*10)/10).toString().replace('.',',')+' km · '+avg+' km/h de moyenne · '+(r.toll?'avec péage':'sans péage')+cmp+'</span></button>';
   }).join('');
   rtSteps();rtDraw();
 }
@@ -1720,7 +1738,7 @@ function rtDraw(){
   ctx.fillStyle='rgba(255,255,255,.75)';ctx.fillRect(W-150,H-16,150,16);ctx.fillStyle='#222';ctx.font='10px sans-serif';ctx.textAlign='right';ctx.textBaseline='middle';ctx.fillText('© contributeurs OpenStreetMap',W-4,H-8);
 }
 $('rtGo').addEventListener('click',rtCompute);
-['rtFrom','rtTo','rtCap'].forEach(function(id){$(id).addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();$(id).blur();rtCompute()}})});
+['rtFrom','rtTo','rtCap','rtExtra'].forEach(function(id){$(id).addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();$(id).blur();rtCompute()}})});
 $('rtHere').addEventListener('click',function(){$('rtFrom').value='Ma position';toast('Départ : votre position au moment du calcul.')});
 $('rtOpts').addEventListener('click',function(e){var b=e.target.closest('.rt-opt');if(!b)return;RT.sel=+b.dataset.i;Array.prototype.forEach.call($('rtOpts').children,function(x,i){x.setAttribute('aria-pressed',String(i===RT.sel))});rtSteps();rtDraw()});
 window.addEventListener('resize',function(){if(!$('tab-route').hidden)rtDraw()});
