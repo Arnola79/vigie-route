@@ -250,7 +250,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v33</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v34</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -264,7 +264,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
     <div class="card dmap" id="dmapCard" hidden>
       <canvas id="dmap" aria-label="Carte du trajet"></canvas>
       <button type="button" class="dm-btn" id="dmMode" aria-label="Orientation de la carte">⬆</button>
-      <button type="button" class="dm-btn" id="dmMute" style="top:60px" aria-label="Couper le son" aria-pressed="false">🔊</button>
+      <button type="button" class="dm-btn" id="dmMute" style="top:60px" aria-label="Couper le guidage vocal" aria-pressed="false">🔊</button>
       <div class="dm-spd"><b id="dmSpd">0</b><small>km/h</small><i id="dmLim">–</i></div>
     </div>
     <div class="card gauge" id="gauge" data-state="ok">
@@ -507,7 +507,7 @@ function toast(msg,ms){var t=$('toast');t.textContent=msg;t.hidden=false;clearTi
 var NAT=(typeof window.VigieNative!=='undefined')?window.VigieNative:null;
 function initAudio(){try{var AC=window.AudioContext||window.webkitAudioContext;if(AC&&!S.ac)S.ac=new AC();if(S.ac&&S.ac.state==='suspended')S.ac.resume()}catch(e){}}
 function beep(freq,dur,delay,vol){
-  if(!settings.sound||S.muted||inCall())return;
+  if(!settings.sound||inCall())return;
   if(NAT){try{NAT.beep(freq,Math.round(dur*1000),Math.round((delay||0)*1000))}catch(e){}return}
   if(!S.ac)return;
   try{var t=S.ac.currentTime+(delay||0),o=S.ac.createOscillator(),g=S.ac.createGain();
@@ -515,7 +515,7 @@ function beep(freq,dur,delay,vol){
     g.gain.exponentialRampToValueAtTime(vol||0.25,t+0.02);g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
     o.connect(g);g.connect(S.ac.destination);o.start(t);o.stop(t+dur+0.03)}catch(e){}
 }
-function say(txt,kind){if(!settings.voice||S.muted)return;if(inCall()){callQueue(txt,kind);return}if(NAT){try{NAT.speak(txt)}catch(e){}return}try{if(!('speechSynthesis' in window))return;var u=new SpeechSynthesisUtterance(txt);u.lang='fr-FR';u.rate=1.05;window.speechSynthesis.cancel();window.speechSynthesis.speak(u)}catch(e){}}
+function say(txt,kind){if(!settings.voice||(kind==='nav'&&S.muted))return;if(inCall()){callQueue(txt,kind);return}if(NAT){try{NAT.speak(txt)}catch(e){}return}try{if(!('speechSynthesis' in window))return;var u=new SpeechSynthesisUtterance(txt);u.lang='fr-FR';u.rate=1.05;window.speechSynthesis.cancel();window.speechSynthesis.speak(u)}catch(e){}}
 function say2nav(t){say(t,'nav')}
 function inCall(){if(!NAT||!NAT.inCall)return false;try{return !!NAT.inCall()}catch(e){return false}}
 var CALLQ={list:[],timer:0};
@@ -526,14 +526,14 @@ function callQueue(txt,kind){
     if(inCall())return;
     clearInterval(CALLQ.timer);CALLQ.timer=0;
     var parts=[],now=Date.now(),seen={};
-    if(NAV&&NAV.on&&!NAV.arrived){var nx=NAV.r.man[NAV.mi];if(nx){var dm=(nx.off-NAV.off)*1000;parts.push('Prochaine instruction : dans '+(dm>=1000?(Math.round(dm/100)/10).toString().replace('.',',')+' kilomètres':Math.max(50,Math.round(dm/50)*50)+' mètres')+', '+nx.txt)}}
+    if(NAV&&NAV.on&&!NAV.arrived&&!S.muted){var nx=NAV.r.man[NAV.mi];if(nx){var dm=(nx.off-NAV.off)*1000;parts.push('Prochaine instruction : dans '+(dm>=1000?(Math.round(dm/100)/10).toString().replace('.',',')+' kilomètres':Math.max(50,Math.round(dm/50)*50)+' mètres')+', '+nx.txt)}}
     var miss=[];CALLQ.list.filter(function(x){return now-x.t<180000}).slice(-2).forEach(function(x){if(!seen[x.txt]){seen[x.txt]=1;miss.push(x.txt)}});
     if(miss.length)parts.push('Pendant l\'appel : '+miss.join('. '));
     CALLQ.list=[];
     if(parts.length&&S.mode!=='idle')say('Appel terminé. '+parts.join('. '));
   },2000);
 }
-function setMute(on){S.muted=on;var b=$('dmMute');if(b){b.textContent=on?'🔇':'🔊';b.setAttribute('aria-pressed',String(on))}toast(on?'Annonces et bips coupés.':'Annonces et bips rétablis.')}
+function setMute(on){S.muted=on;var b=$('dmMute');if(b){b.textContent=on?'🔇':'🔊';b.setAttribute('aria-pressed',String(on))}toast(on?'Guidage vocal coupé. Les alertes (dépassement, zones de danger, incidents) restent actives.':'Guidage vocal rétabli.')}
 function buzz(p){if(settings.vibrate&&NAT){try{NAT.vibrate(JSON.stringify([].concat(p)))}catch(e){}return}if(settings.vibrate&&navigator.vibrate){try{navigator.vibrate(p)}catch(e){}}}
 function requestWake(){if(NAT){try{NAT.keepScreen(true)}catch(e){}return}try{if(navigator.wakeLock){navigator.wakeLock.request('screen').then(function(w){S.wake=w}).catch(function(){})}}catch(e){}}
 function releaseWake(){if(NAT){try{NAT.keepScreen(false)}catch(e){}return}try{if(S.wake){S.wake.release();S.wake=null}}catch(e){}}
@@ -2141,7 +2141,7 @@ function navStart(r){
   NAV={r:navPrep(r),idx:0,off:0,mi:0,said:{},offN:0,lastRe:0,b:RT.b,cap:RT.cap,on:false,arrived:false};
   showTab('trajet');
   if(S.mode==='idle')startLive();
-  say('Guidage démarré.');navRender();
+  say('Guidage démarré.','nav');navRender();
 }
 function navStop(msg){NAV=null;navRender();if(msg)toast(msg)}
 /* projection de la position sur le tracé : cherche autour du dernier point connu */
@@ -2165,7 +2165,7 @@ function navTick(f){
   if(m.d<=tol&&(!NAV.on||m.off>=NAV.off-0.3)){NAV.on=true;NAV.idx=m.i;NAV.off=m.off;NAV.offN=0}
   else{NAV.offN++;if(NAV.offN>=4&&S.speed>8)navReroute(f);navRender();return null}
   var r=NAV.r,left=r.cum[r.cum.length-1]-NAV.off;
-  if(left<0.05){NAV.arrived=true;say('Vous êtes arrivé.');navRender();setTimeout(function(){if(NAV&&NAV.arrived)navStop()},60000);return null}
+  if(left<0.05){NAV.arrived=true;say('Vous êtes arrivé.','nav');navRender();setTimeout(function(){if(NAV&&NAV.arrived)navStop()},60000);return null}
   while(NAV.mi<r.man.length&&r.man[NAV.mi].off<NAV.off+0.02)NAV.mi++;
   var nx=r.man[NAV.mi];
   if(nx){
@@ -2183,7 +2183,7 @@ function navTick(f){
 }
 function navReroute(f){
   var t=Date.now();if(t-NAV.lastRe<20000||NAV.busy)return;
-  NAV.lastRe=t;NAV.busy=true;say('Itinéraire quitté, recalcul.');
+  NAV.lastRe=t;NAV.busy=true;say('Itinéraire quitté, recalcul.','nav');
   var cur={lat:f.lat,lon:f.lon},plan=NAV.r.plan,p;
   if(plan&&ttKey()){
     var L=0;(NAV.r.legStart||[0]).forEach(function(s,i){if(NAV.idx>=s)L=i});
