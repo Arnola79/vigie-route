@@ -211,7 +211,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v17</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v18</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -282,6 +282,12 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
       <h2>Zones de la carte</h2>
       <p id="camStatus">Chargées automatiquement pendant un trajet.</p>
       <p>Données OpenStreetMap, saisies par des contributeurs : elles peuvent être incomplètes ou dépassées. Ce n'est pas une base officielle.</p>
+    </div>
+    <div class="card note">
+      <h2>Limites corrigées</h2>
+      <p id="ovrEmpty">Aucune. Pendant un trajet, touchez le panneau pour corriger la limite d'une route.</p>
+      <div id="ovrList"></div>
+      <div class="actions" id="ovrActs" hidden><button class="btn" id="btnOvrCopy" type="button">Copier la liste</button></div>
     </div>
     <div class="card form">
       <label class="full">Nom<input type="text" id="zName" placeholder="Ex. Entrée de village" autocomplete="off"></label>
@@ -607,6 +613,7 @@ function parseMax(v){
   return ({'fr:urban':50,'fr:rural':80,'fr:motorway':130})[v]||null;
 }
 var OVR=LS.get('ovr',{});if(!OVR||typeof OVR!=='object')OVR={};
+var OVN=LS.get('ovrn',{});if(!OVN||typeof OVN!=='object')OVN={};
 function wayTouch(w,u){
   var g=w.g,h=u.g,n=g.length,m=h.length;
   var ends=[[g[0],g[1]],[g[n-2],g[n-1]]],ends2=[[h[0],h[1]],[h[m-2],h[m-1]]];
@@ -1463,6 +1470,23 @@ try{document.fonts.ready.then(fitSign);document.fonts.addEventListener('loadingd
 try{window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',renderTrace)}catch(e){}
 
 /* ---------- correction manuelle de la limite d'une route ---------- */
+function renderOvr(){
+  var box=$('ovrList');if(!box)return;
+  var ids=Object.keys(OVR);
+  $('ovrEmpty').hidden=ids.length>0;$('ovrActs').hidden=!ids.length;
+  box.innerHTML='';
+  ids.forEach(function(id){
+    var r=document.createElement('div');r.style.cssText='display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border,#444)';
+    var t=document.createElement('span');t.style.cssText='flex:1;font-size:14px';t.textContent=(OVN[id]||('Route '+id));
+    var l=document.createElement('b');l.style.cssText='font:700 18px var(--font-num)';l.textContent=OVR[id];
+    var b=document.createElement('button');b.type='button';b.className='btn';b.textContent='Retirer';b.dataset.id=id;
+    r.appendChild(t);r.appendChild(l);r.appendChild(b);box.appendChild(r);
+  });
+}
+(function(){
+  $('ovrList').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;delete OVR[b.dataset.id];delete OVN[b.dataset.id];LS.set('ovr',OVR);LS.set('ovrn',OVN);A.cur.key=null;renderOvr()});
+  $('btnOvrCopy').addEventListener('click',function(){copyText(Object.keys(OVR).map(function(id){return (OVN[id]||('Route '+id))+' ; '+OVR[id]}).join('\n'))});
+})();
 (function(){
   var lp=$('limPick'),grid=$('lpGrid'),wid=null;
   [20,30,50,70,80,90,110,130].forEach(function(v){var b=document.createElement('button');b.type='button';b.textContent=v;b.dataset.v=v;grid.appendChild(b)});
@@ -1483,8 +1507,8 @@ try{window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',
     var v=b.dataset.v;
     if(v==='c'){close();return}
     if(wid!=null){
-      if(v==='x')delete OVR[wid];else OVR[wid]=+v;
-      LS.set('ovr',OVR);
+      if(v==='x'){delete OVR[wid];delete OVN[wid]}else{OVR[wid]=+v;OVN[wid]=(A.cur.road||'Route sans nom')+' ('+(S.last?S.last.lat.toFixed(4)+', '+S.last.lon.toFixed(4):'')+')'}
+      LS.set('ovr',OVR);LS.set('ovrn',OVN);renderOvr();
       A.cur.key=null;A.pendKey=undefined;A.pc=0;
       toast(v==='x'?'Correction retirée.':'Limite '+v+' mémorisée pour cette route.');
     }
@@ -1492,7 +1516,7 @@ try{window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',
   });
 })();
 
-render();renderZones();renderJournal();renderOffline();fitSign();
+renderOvr();render();renderZones();renderJournal();renderOffline();fitSign();
 
 if(typeof window!=='undefined'&&window.__VIGIE_TEST__){window.__VIGIE_TEST__({T:T,pump:pump,tileTick:tileTick,rebuildActive:rebuildActive,enqueue:enqueue,planPrefetch:planPrefetch,S:S,startDemo:startDemo,demoTick:demoTick,trips:function(){return trips},parseZones:parseZones,csvText:csvText,A:A,matchWay:matchWay,OVR:OVR,parseMax:parseMax,overpass:overpass,startLive:startLive,stopTrip:stopTrip,storeTile:storeTile,drawTripMap:drawTripMap,BASEC:BASEC})}
 })();
