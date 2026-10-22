@@ -256,7 +256,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v38</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v39</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -377,6 +377,13 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
       <button class="btn" id="btnCsv" type="button">Exporter</button>
       <button class="btn" id="btnCopy" type="button">Copier</button>
       <button class="btn danger" id="btnClearLog" type="button">Effacer</button>
+    </div>
+    <div class="card note">
+      <h2>Sauvegarde</h2>
+      <p>Enregistre le journal, vos zones et vos corrections dans un fichier à garder ailleurs que sur le téléphone : Google Drive, e-mail… En cas de perte, installez l'application sur le nouveau téléphone et touchez « Restaurer ».</p>
+      <p id="bakInfo"></p>
+      <div class="actions" style="grid-template-columns:1fr 1fr"><button class="btn primary" id="btnBak" type="button">Sauvegarder</button><button class="btn" id="btnRest" type="button">Restaurer</button></div>
+      <input class="vh" type="file" id="bakFile" accept=".json,application/json">
     </div>
   </section>
   <section class="panel" id="tab-route" role="tabpanel" aria-label="Itinéraire" hidden>
@@ -559,7 +566,7 @@ function setGps(state,acc){
 
 /* ---------- trajet ---------- */
 function beginTrip(demo){
-  TL={lim:null,road:null,at:0,pos:null,hd:null,busy:false,same:0,last:null,pend:null};
+  TL={lim:null,road:null,at:0,pos:null,hd:null,busy:false,same:0,last:null,pend:null,trail:[]};
   setTimeout(function(){dmShow(true)},0);
   S.mode=demo?'demo':'live';
   S.last=null;S.speed=0;S.heading=null;S.zoneState={};S.zoneInfo={level:'none'};S.curLimitZone=false;S.lastBeepAt=0;S.limSrc=demo?'demo':'inconnue';
@@ -609,7 +616,7 @@ function stopTrip(discard){
     else{trips.unshift(summarize(tr));if(!wasDemo)saveTrips()}
   }
   LS.del('active');
-  S.mode='idle';S.zoneInfo={level:'none'};S.curLimitZone=false;NAV=null;navRender();dmShow(false);if(S.muted)setMute(false);
+  S.mode='idle';S.zoneInfo={level:'none'};S.curLimitZone=false;NAV=null;navRender();dmShow(false);tlcSave();if(S.muted)setMute(false);
   setGps('idle');render();renderJournal();
 }
 
@@ -1899,8 +1906,8 @@ var TT_URL='https://api.tomtom.com/routing/1/calculateRoute/';
 function ttUse(k,n){var m=new Date().toISOString().slice(0,7),c=LS.get('ttuse',null);if(!c||c.m!==m)c={m:m};if(n){c[k]=(c[k]||0)+n;LS.set('ttuse',c)}return c[k]||0}
 function ttUsageUI(){
   var el=$('ttUsage');if(!el)return;
-  var rows=[['Itinéraires',ttUse('route'),20000],['Limites (trajet libre)',tlCount().n,20000],['Incidents',incCount().n,2500],['Carte (tuiles)',ttUse('tile'),200000]];
-  el.innerHTML='<b>Requêtes TomTom ce mois</b>'+rows.map(function(r){var pc=Math.min(100,r[1]/r[2]*100);
+  var rows=[['Itinéraires',ttUse('route'),20000],['Limites (trajet libre)',tlCount().n,20000],['Incidents',incCount().n,2500],['Carte (tuiles)',ttUse('tile'),200000],['Limites lues en mémoire (gratuit)',ttUse('cache'),0]];
+  el.innerHTML='<b>Requêtes TomTom ce mois</b>'+rows.map(function(r){if(!r[2])return '<div class="ttu"><span>'+r[0]+'</span><span>'+r[1].toLocaleString('fr-FR')+'</span></div>';var pc=Math.min(100,r[1]/r[2]*100);
     return '<div class="ttu"><span>'+r[0]+'</span><span>'+r[1].toLocaleString('fr-FR')+' / '+r[2].toLocaleString('fr-FR')+'</span><i><b style="width:'+pc.toFixed(1)+'%;background:'+(pc>80?'var(--bad)':pc>50?'var(--warn)':'var(--ok)')+'"></b></i></div>'}).join('')+
     '<small>Quotas gratuits mensuels. Le décompte officiel est sur votre tableau de bord developer.tomtom.com.</small>';
 }
@@ -2085,39 +2092,148 @@ function startChooser(){
   $('startPick').hidden=false;
 }
 /* ---------- limites TomTom en trajet libre (géocodage inverse, quota 20 000 / mois) ---------- */
-var TL={lim:null,road:null,at:0,pos:null,hd:null,busy:false,same:0,last:null,pend:null};
+var TL={lim:null,road:null,at:0,pos:null,hd:null,busy:false,same:0,last:null,pend:null,trail:[]};
 var TL_MAX=18000;
 function ttOnly(){return !!ttKey()&&settings.ttlim!==false}
 function tlCount(){var m=new Date().toISOString().slice(0,7),c=LS.get('ttrev',null);if(!c||c.m!==m)c={m:m,n:0};return c}
 function tlUI(){var el=$('tlInfo');if(el){var c=tlCount();el.textContent=ttKey()?('Requêtes ce mois : '+c.n+' / '+TL_MAX+' (gratuit jusqu\'à 20 000)'):'Nécessite la clé TomTom (onglet Itinéraire).'}}
+/* mémoire locale des limites TomTom : [lat, lon, limite, cap (-1 inconnu), rue, jour] par cellule d'environ 110 m */
+var TLC={cells:{},n:0,dirty:false,ready:false};
+idbGet('ttlc').then(function(v){if(v&&typeof v==='object'){for(var k in v){if(!TLC.cells[k])TLC.cells[k]=v[k]}}TLC.n=0;for(var k2 in TLC.cells)TLC.n+=TLC.cells[k2].length;TLC.ready=true}).catch(function(){TLC.ready=true});
+function tlcKey(la,lo){return Math.round(la*900)+'_'+Math.round(lo*900)}
+function tlcDay(){return Math.floor(Date.now()/864e5)}
+function tlcPut(la,lo,lim,road,hd,derived){
+  if(lim==null||!isFinite(la)||!isFinite(lo))return;
+  var k=tlcKey(la,lo),c=TLC.cells[k]||(TLC.cells[k]=[]),p={lat:la,lon:lo};
+  for(var i=c.length-1;i>=0;i--){if(dist(p,{lat:c[i][0],lon:c[i][1]})<15&&(c[i][3]<0||hd==null||angDiff(c[i][3],hd)<50)){c.splice(i,1);TLC.n--}}
+  var e=[+la.toFixed(5),+lo.toFixed(5),lim,hd==null?-1:Math.round(hd),road||'',tlcDay()];if(derived)e.push(1);c.push(e);TLC.n++;
+  if(c.length>40){c.shift();TLC.n--}
+  TLC.dirty=true;
+  if(TLC.n>60000){/* on retire les cellules les plus anciennes */
+    var ks=Object.keys(TLC.cells).map(function(x){var e=TLC.cells[x],m=0;for(var j=0;j<e.length;j++)m=Math.max(m,e[j][5]);return [x,m]}).sort(function(a,b){return a[1]-b[1]});
+    for(var q=0;q<ks.length&&TLC.n>50000;q++){TLC.n-=TLC.cells[ks[q][0]].length;delete TLC.cells[ks[q][0]]}
+  }
+  return [k,e];
+}
+function tlcDrop(list){(list||[]).forEach(function(r){var c=TLC.cells[r[0]];if(!c)return;var i=c.indexOf(r[1]);if(i>=0){c.splice(i,1);TLC.n--;TLC.dirty=true}})}
+function tlcGet(f,hd){
+  var bi=Math.round(f.lat*900),bj=Math.round(f.lon*900),best=null,today=tlcDay();
+  for(var di=-1;di<=1;di++)for(var dj=-1;dj<=1;dj++){
+    var c=TLC.cells[(bi+di)+'_'+(bj+dj)];if(!c)continue;
+    for(var i=0;i<c.length;i++){
+      var e=c[i];if(today-e[5]>180)continue;
+      if(hd!=null&&e[3]>=0&&angDiff(e[3],hd)>50&&angDiff(e[3],(hd+180)%360)>50)continue;
+      var d=dist(f,{lat:e[0],lon:e[1]});
+      if(d<=30&&(!best||d<best.d))best={d:d,lim:e[2],road:e[4]||null};
+    }
+  }
+  return best;
+}
+function tlcSave(){if(!TLC.dirty)return;TLC.dirty=false;idbPut('ttlc',TLC.cells).catch(function(){TLC.dirty=true})}
+setInterval(tlcSave,30000);
+document.addEventListener('visibilitychange',function(){if(document.visibilityState==='hidden')tlcSave()});
+/* les limites d'un itinéraire TomTom calculé sont gardées en mémoire (sans requête de plus) */
+function tlcSeedRoute(r){
+  if(!r||!r.lims||!r.lims.length||!r.cum)return;
+  var P=r.pts,next=0;
+  r.lims.forEach(function(s){
+    for(var i=s.beg;i<s.end&&i+1<P.length;i++){
+      if(r.cum[i]<next)continue;next=r.cum[i]+0.1;
+      tlcPut(P[i][0],P[i][1],s.lim,null,bearing({lat:P[i][0],lon:P[i][1]},{lat:P[i+1][0],lon:P[i+1][1]}));
+    }
+  });
+}
+function tlApply(lim,road,f){
+  /* un changement de limite n'est adopté que s'il est confirmé par une 2e lecture un peu plus loin
+     (évite de prendre la limite d'une ruelle voisine à un carrefour ou si le GPS dérive) */
+  if(lim!=null){
+    if(TL.lim==null||lim===TL.lim){TL.same=TL.lim===lim?TL.same+1:0;TL.lim=lim;TL.road=road||TL.road;TL.pend=null;TL.last={lat:f.lat,lon:f.lon};return 'ok'}
+    if(TL.pend&&TL.pend.lim===lim&&dist(TL.pend.at,f)>=30){var pp=TL.pend;TL.lim=lim;TL.road=road||pp.road;TL.same=0;TL.pend=null;TL.last={lat:f.lat,lon:f.lon};return pp}
+    if(!TL.pend||TL.pend.lim!==lim)TL.pend={lim:lim,road:road,at:{lat:f.lat,lon:f.lon},hd:S.heading};
+    return 'pend';
+  }
+  else if(!TL.last||dist(TL.last,f)>600){TL.lim=null;TL.road=road;TL.same=0;TL.pend=null}
+  return 'none';
+}
 function ttLimit(f){
   var now=Date.now(),sp=S.speed,c=tlCount();
-  if(c.n>=TL_MAX)return null;
+  /* saut de position (tunnel, perte du GPS, démarrage) : on oublie la limite en cours plutôt que de la propager */
+  if(TL.fix&&(dist(TL.fix,f)>400||(f.t||now)-TL.fix.t>60000)){TL.lim=null;TL.road=null;TL.pend=null;TL.trail=[];TL.pos=null;TL.cpos=null;TL.last=null;TL.same=0}
+  TL.fix={lat:f.lat,lon:f.lon,t:f.t||now};
+  /* 1) mémoire locale : lue tous les 40 m, gratuite */
+  if(!TL.cpos||dist(TL.cpos,f)>40||TL.pend){
+    TL.cpos={lat:f.lat,lon:f.lon};
+    var h=tlcGet(f,sp>8?S.heading:null);TL.hit=!!h;
+    if(h){tlApply(h.lim,h.road,f);TL.pos={lat:f.lat,lon:f.lon};TL.hd=S.heading;ttUse('cache',1)}
+  }
+  /* 2) TomTom, seulement là où la mémoire ne sait rien */
   var moved=TL.pos?dist(TL.pos,f):1e9,thr=TL.pend?40:Math.max(150,sp*5)*(TL.same>=2?2:1);
   var turned=TL.hd!=null&&S.heading!=null&&angDiff(TL.hd,S.heading)>35&&moved>40;
   var need=!TL.pos||moved>thr||turned||(TL.lim==null&&now-TL.at>15000&&moved>20);
-  if(need&&!TL.busy&&now-TL.at>=(TL.pend?2500:4000)&&navigator.onLine!==false&&(sp>3||TL.lim==null)){
+  if(need&&c.n<TL_MAX&&!TL.busy&&now-TL.at>=(TL.pend?2500:4000)&&navigator.onLine!==false&&(sp>3||TL.lim==null)){
     TL.busy=true;TL.at=now;TL.pos={lat:f.lat,lon:f.lon};TL.hd=S.heading;c.n++;LS.set('ttrev',c);
+    var hd=S.heading!=null&&sp>8?S.heading:null;
     var url='https://api.tomtom.com/search/2/reverseGeocode/'+f.lat.toFixed(6)+','+f.lon.toFixed(6)+'.json?key='+encodeURIComponent(ttKey())+
-      '&returnSpeedLimit=true&radius=40&language=fr-FR'+(S.heading!=null&&sp>8?'&heading='+Math.round(S.heading):'');
+      '&returnSpeedLimit=true&radius=40&language=fr-FR'+(hd!=null?'&heading='+Math.round(hd):'');
     fetchJson(url,8000).then(function(j){
       var a=j&&j.addresses&&j.addresses[0],ad=a&&a.address||{},m=/^([\d.]+)\s*(KPH|MPH)/.exec(ad.speedLimit||'');
       var lim=m?Math.round(+m[1]*(m[2]==='MPH'?1.609:1)):null,road=ad.streetName||ad.street||null;
-      /* un changement de limite n'est adopté que s'il est confirmé par une 2e lecture un peu plus loin
-         (évite de prendre la limite d'une ruelle voisine à un carrefour ou si le GPS dérive) */
-      if(lim!=null){
-        if(TL.lim==null||(lim===TL.lim&&road===TL.road)){TL.same=TL.lim===lim?TL.same+1:0;TL.lim=lim;TL.road=road;TL.pend=null;TL.last={lat:f.lat,lon:f.lon}}
-        else if(TL.pend&&TL.pend.lim===lim&&TL.pend.road===road){TL.lim=lim;TL.road=road;TL.same=0;TL.pend=null;TL.last={lat:f.lat,lon:f.lon}}
-        else{TL.pend={lim:lim,road:road};TL.last={lat:f.lat,lon:f.lon}}
+      var prev=TL.lim,st=tlApply(lim,road,f);
+      if(lim!=null&&st!=='pend'){
+        tlcPut(f.lat,f.lon,lim,road,hd);
+        if(typeof st==='object')tlcPut(st.at.lat,st.at.lon,st.lim,st.road,st.hd);
+        if(lim!==prev)tlcDrop(TL.trail);
+        TL.trail=[];
       }
-      else if(!TL.last||dist(TL.last,f)>600){TL.lim=null;TL.road=road;TL.same=0;TL.pend=null}
     }).catch(function(){}).then(function(){TL.busy=false;tlUI()});
   }
+  if(TL.lim!=null&&!TL.pend&&!TL.hit&&TL.last&&dist(TL.last,f)<700&&(!TL.dpos||dist(TL.dpos,f)>40)){TL.dpos={lat:f.lat,lon:f.lon};var de=tlcPut(f.lat,f.lon,TL.lim,TL.road,sp>8?S.heading:null,true);if(de){(TL.trail=TL.trail||[]).push(de)}}
   var ok=TL.road?'tt:'+TL.road+'@'+(Math.round(f.lat*20)/20).toFixed(2)+','+(Math.round(f.lon*20)/20).toFixed(2):null;
   A.cur.road=TL.road;A.cur.wid=ok;A.cur.lim=TL.lim;A.cur.src='tomtom';
   if(ok&&OVR[ok]!=null){A.cur.lim=OVR[ok];A.cur.src='corrigee';return {lim:OVR[ok],src:'corrigee'}}
   if(TL.lim==null)return null;
   return {lim:TL.lim,src:'tomtom'};
+}
+/* ---------- sauvegarde / restauration du journal ---------- */
+function bakData(){
+  var st=Object.assign({},settings);
+  return {app:'vigie-route',format:1,date:new Date().toISOString(),trips:trips,zones:zones,ovr:OVR,ovn:OVN,settings:st,
+    route:{q:LS.get('rtq',null)},ttlc:TLC.cells};
+}
+function bakName(){var d=new Date();return 'vigie-sauvegarde-'+d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+'.json'}
+function bakSave(){
+  var txt=JSON.stringify(bakData()),name=bakName();
+  LS.set('lastbak',Date.now());bakUI();
+  if(NAT&&NAT.shareFile){try{NAT.shareFile(name,'application/json',txt);return}catch(e){}}
+  if(NAT&&NAT.exportCsv){try{NAT.exportCsv(name,txt);return}catch(e){}}
+  try{var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([txt],{type:'application/json'}));a.download=name;document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},2000);toast('Sauvegarde téléchargée : '+name)}catch(e){toast('Sauvegarde impossible ici.')}
+}
+function bakRestore(text){
+  var d;try{d=JSON.parse(text)}catch(e){toast('Fichier illisible.');return}
+  if(!d||d.app!=='vigie-route'||!Array.isArray(d.trips)){toast('Ce fichier n\'est pas une sauvegarde Vigie Route.');return}
+  var have={},nt=0,nz=0,no=0;
+  trips.forEach(function(t){have[t.id||t.start]=1});
+  d.trips.forEach(function(t){if(t&&!have[t.id||t.start]){trips.push(t);have[t.id||t.start]=1;nt++}});
+  trips.sort(function(a,b){return (b.start||0)-(a.start||0)});saveTrips();
+  if(Array.isArray(d.zones)){var zk={};zones.forEach(function(z){zk[z.lat.toFixed(5)+','+z.lon.toFixed(5)]=1});
+    d.zones.forEach(function(z){if(z&&okZone(z.lat,z.lon)&&!zk[z.lat.toFixed(5)+','+z.lon.toFixed(5)]){zones.push(z);nz++}});LS.set('zones',zones)}
+  if(d.ovr&&typeof d.ovr==='object'){for(var k in d.ovr){if(OVR[k]==null){OVR[k]=d.ovr[k];if(d.ovn&&d.ovn[k])OVN[k]=d.ovn[k];no++}}LS.set('ovr',OVR);LS.set('ovn',OVN)}
+  if(d.ttlc&&typeof d.ttlc==='object'){for(var c in d.ttlc){if(!TLC.cells[c]&&Array.isArray(d.ttlc[c])){TLC.cells[c]=d.ttlc[c];TLC.n+=d.ttlc[c].length}}TLC.dirty=true;tlcSave()}
+  if(d.settings&&typeof d.settings==='object'&&!LS.get('settings',null)){Object.assign(settings,d.settings);saveSettings()}
+  renderJournal();renderZones();renderOvr();
+  toast('Restauration : '+nt+' trajet'+(nt>1?'s':'')+', '+nz+' zone'+(nz>1?'s':'')+', '+no+' correction'+(no>1?'s':'')+' ajoutés.',8000);
+}
+window.__pickedFile=function(name,text){if(text==null){toast('Fichier non lu.');return}bakRestore(text)};
+function bakPick(){
+  if(NAT&&NAT.pickFile){try{NAT.pickFile();return}catch(e){}}
+  if(NAT){toast('Installez la dernière version de l\'APK pour restaurer une sauvegarde.',7000);return}
+  $('bakFile').click();
+}
+function bakUI(){
+  var el=$('bakInfo');if(!el)return;var t=LS.get('lastbak',0);
+  var old=!t||Date.now()-t>30*864e5;
+  el.textContent=t?'Dernière sauvegarde : '+new Date(t).toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'})+(old&&trips.length?' · pensez à en refaire une':''):'Aucune sauvegarde pour l\'instant.';
+  el.style.color=old&&trips.length?'var(--warn)':'';
 }
 /* ---------- incidents TomTom en temps réel (quota gratuit : 2 500 / mois) ---------- */
 var INC={raw:[],list:[],at:0,busy:false,said:{}};
@@ -2190,6 +2306,7 @@ function navPrep(r){
 function navStart(r){
   if(S.mode==='demo'){toast('Arrêtez la démo avant de suivre un itinéraire.');return}
   INC={raw:[],list:[],at:0,busy:false,said:{}};
+  tlcSeedRoute(r);
   NAV={r:navPrep(r),idx:0,off:0,mi:0,said:{},offN:0,lastRe:0,b:RT.b,cap:RT.cap,on:false,arrived:false};
   showTab('trajet');
   if(S.mode==='idle')startLive();
@@ -2242,7 +2359,7 @@ function navReroute(f){
     var pts=[[f.lat,f.lon]].concat(plan.wps.slice(L+1)),av=plan.avoid.slice(L);
     p=ttRoute(pts,av,{cap:NAV.cap,guide:true});
   }else p=valhalla(cur,NAV.b,{cap:NAV.cap}).then(function(l){return l[0]});
-  p.then(function(r){if(!NAV)return;var said=NAV.said;NAV.r=navPrep(r);NAV.idx=0;NAV.off=0;NAV.mi=0;NAV.said={};NAV.on=false;NAV.offN=0;if(S.last)navTick(S.last);incMatch();navRender()})
+  p.then(function(r){if(!NAV)return;var said=NAV.said;NAV.r=navPrep(r);tlcSeedRoute(NAV.r);NAV.idx=0;NAV.off=0;NAV.mi=0;NAV.said={};NAV.on=false;NAV.offN=0;if(S.last)navTick(S.last);incMatch();navRender()})
    .catch(function(){toast('Recalcul impossible pour le moment.')})
    .then(function(){if(NAV)NAV.busy=false});
 }
@@ -2328,7 +2445,10 @@ $('rtFollow').addEventListener('click',function(){var r=RT.routes[RT.sel];if(r)n
 $('navX').addEventListener('click',function(){navStop('Guidage arrêté. Le trajet continue.')});
 function rtEngUI(){var k=ttKey();$('rtEngName').textContent=k?'TomTom':'Valhalla (approximatif sur petites routes)';$('rtKey').value=k}
 $('rtKey').addEventListener('change',function(){var v=$('rtKey').value.replace(/\s+/g,'');LS.set('ttkey',v);rtEngUI();toast(v?'Clé TomTom enregistrée.':'Clé retirée : calcul par Valhalla.')});
-rtEngUI();tlUI();ttUsageUI();$('rtEng').addEventListener('toggle',ttUsageUI);
+rtEngUI();tlUI();ttUsageUI();bakUI();
+$('btnBak').addEventListener('click',bakSave);
+$('btnRest').addEventListener('click',bakPick);
+$('bakFile').addEventListener('change',function(e){var f=e.target.files&&e.target.files[0];if(!f)return;var r=new FileReader();r.onload=function(){bakRestore(String(r.result))};r.readAsText(f);e.target.value=''});$('rtEng').addEventListener('toggle',ttUsageUI);
 $('incOn').addEventListener('change',function(){LS.set('incon',$('incOn').checked)});incUI();
 ['rtFrom','rtTo','rtCap','rtExtra'].forEach(function(id){$(id).addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();$(id).blur();rtCompute()}})});
 $('rtHere').addEventListener('click',function(){$('rtFrom').value='Ma position';toast('Départ : votre position au moment du calcul.')});
