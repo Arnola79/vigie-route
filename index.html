@@ -174,6 +174,13 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 .ev li{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 10px;font-size:13px;padding:8px 10px;border-radius:6px;background:var(--surface-2);font-variant-numeric:tabular-nums}
 .ev b{color:var(--bad)}
 .tmapbox{padding:0 14px 10px;display:grid;gap:6px}
+.tmap,#trace{cursor:zoom-in}
+#mapFull{position:fixed;inset:0;z-index:60;background:var(--bg);display:block}
+#mapFull[hidden]{display:none}
+#mfCanvas{width:100%;height:100%;display:block;touch-action:none;background:var(--surface-2)}
+.mf-bar{position:absolute;top:max(10px,env(safe-area-inset-top,0px));right:10px;display:grid;gap:8px}
+.mf-bar button{width:46px;height:46px;border-radius:12px;border:1px solid var(--line);background:var(--surface);color:var(--fg);font-size:24px;font-weight:700;line-height:1}
+#mfTitle{position:absolute;left:10px;top:max(10px,env(safe-area-inset-top,0px));padding:8px 12px;border-radius:10px;background:var(--surface);border:1px solid var(--line);font-size:13px;color:var(--fg-dim)}
 .tmap{width:100%;height:250px;display:block;border-radius:6px;background:var(--surface-2)}
 .tleg{margin:0;font-size:12px;color:var(--fg-dim);overflow-wrap:anywhere}
 .tleg i{font-style:normal;font-weight:700}
@@ -192,7 +199,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v15</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v16</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -311,6 +318,16 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
   </div>
 </nav>
 <div class="toast" id="toast" role="status" hidden></div>
+<div id="mapFull" hidden>
+  <canvas id="mfCanvas" aria-label="Carte agrandie"></canvas>
+  <div id="mfTitle">Pincez pour zoomer · glissez pour déplacer</div>
+  <div class="mf-bar">
+    <button type="button" id="mfClose" aria-label="Fermer la carte">✕</button>
+    <button type="button" id="mfIn" aria-label="Zoom avant">+</button>
+    <button type="button" id="mfOut" aria-label="Zoom arrière">−</button>
+    <button type="button" id="mfReset" aria-label="Recadrer">⤢</button>
+  </div>
+</div>
 
 <script>
 (function(){
@@ -795,7 +812,7 @@ function fitSign(){
 }
 
 /* ---------- rendu ---------- */
-function render(){fitSign();renderGauge();renderZone();renderStats();renderTrace()}
+function render(){fitSign();renderGauge();renderZone();renderStats();renderTrace();if(window.__mfLive)window.__mfLive()}
 function renderGauge(){
   var lim=S.mode==='idle'?null:S.curLimit;
   var sp=Math.round(S.speed),m=settings.margin;
@@ -859,8 +876,9 @@ function renderStats(){
   $('stEvBox').classList.toggle('alert',n>0);
   $('stOver').textContent=fmtDur(tr?tr.overMs:0);
 }
-function renderTrace(){
-  var cv=$('trace');if(!cv)return;
+function renderTrace(cv2,vw){
+  var cv=(cv2&&cv2.getContext)?cv2:$('trace');if(!cv)return;
+  if(!(cv2&&cv2.getContext))vw=null;
   var w=cv.clientWidth,h=cv.clientHeight;if(!w||!h)return;
   var dpr=Math.min(window.devicePixelRatio||1,3);
   if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr)}
@@ -886,7 +904,10 @@ function renderTrace(){
   var la0=(minLa+maxLa)/2,lo0=(minLo+maxLo)/2,kx=111320*Math.cos(la0*rad),ky=111320;
   var spanX=Math.max(300,(maxLo-minLo)*kx),spanY=Math.max(300,(maxLa-minLa)*ky),pad=24;
   var sc=Math.min((w-2*pad)/spanX,(h-2*pad)/spanY);
-  function P(la,lo){return [w/2+(lo-lo0)*kx*sc,h/2-(la-la0)*ky*sc]}
+  function P0(la,lo){return [w/2+(lo-lo0)*kx*sc,h/2-(la-la0)*ky*sc]}
+  var view=vw||{z:1,px:0,py:0},anc=vw?P0(cur.lat,cur.lon):[w/2,h/2],scz=sc*view.z;
+  cv._anc=anc;
+  function P(la,lo){var q=P0(la,lo);return [anc[0]+(q[0]-anc[0])*view.z+view.px,anc[1]+(q[1]-anc[1])*view.z+view.py]}
   var lbase=(A.ways&&A.ways.length&&S.mode!=='idle')?{ways:A.ways,pl:A.pl||[]}:null,lvis=null;
   if(lbase){try{lvis=baseRoads(ctx,lbase,P,w,h,C)}catch(e){lbase=null}}
   ctx.lineCap='round';ctx.lineJoin='round';ctx.lineWidth=3.5;
@@ -907,11 +928,11 @@ function renderTrace(){
     var lb=[[w-60,4,w-2,28],[2,h-34,150,h-2],[cp[0]-10,cp[1]-10,cp[0]+10,cp[1]+10]];
     for(i=0;i<pts.length;i+=2){var tq=P(pts[i][0],pts[i][1]);lb.push([tq[0]-7,tq[1]-7,tq[0]+7,tq[1]+7])}
     near.forEach(function(z){var zq=P(z.lat,z.lon);lb.push([zq[0]-11,zq[1]-12,zq[0]+11,zq[1]+9])});
-    try{baseLabels(ctx,lbase,lvis,P,w,h,C,lb)}catch(e){}
+    try{baseLabels(ctx,lbase,lvis,P,w,h,C,lb,view.z)}catch(e){}
   }
-  var steps=[50,100,200,500,1000,2000,5000],len=steps[0];
-  steps.forEach(function(s){if(s*sc<=w*0.3)len=s});
-  var bw=len*sc;ctx.strokeStyle=C('--fg-dim');ctx.lineWidth=2;ctx.lineCap='butt';
+  var steps=[10,20,50,100,200,500,1000,2000,5000],len=steps[0];
+  steps.forEach(function(s){if(s*scz<=w*0.3)len=s});
+  var bw=len*scz;ctx.strokeStyle=C('--fg-dim');ctx.lineWidth=2;ctx.lineCap='butt';
   ctx.beginPath();ctx.moveTo(12,h-12);ctx.lineTo(12+bw,h-12);ctx.moveTo(12,h-17);ctx.lineTo(12,h-7);ctx.moveTo(12+bw,h-17);ctx.lineTo(12+bw,h-7);ctx.stroke();
   ctx.fillStyle=C('--fg-dim');ctx.font='500 11px Barlow, system-ui, sans-serif';ctx.textAlign='left';
   ctx.fillText(len>=1000?(len/1000)+' km':len+' m',12,h-22);
@@ -936,7 +957,7 @@ function renderJournal(){
 function mapBox(t,i){
   if(!t.pts||t.pts.length<2)return '<div class="tmapbox"><p class="tleg">Tracé non enregistré pour ce trajet.</p></div>';
   var zs=t.zs||[],zn=zs.length,list=zs.slice(0,8).map(function(z){return '▲ '+esc(z[2]||'Zone de danger')+(z[3]?' · limite '+z[3]:'')}),extra=zn>8?' … +'+(zn-8):'';
-  return '<div class="tmapbox"><canvas class="tmap" data-i="'+i+'" aria-label="Carte du trajet"></canvas><p class="tleg"><i style="color:var(--accent)">━</i> trajet · <i style="color:var(--bad)">━</i> au-dessus de la limite · <i style="color:var(--warn)">▲</i> zone de danger · numéros = dépassements · <i style="color:var(--fg-dim)">━</i> routes (carte hors ligne)</p>'+(zn?'<p class="tleg">'+zn+' zone'+(zn>1?'s':'')+' de danger à moins de 300 m du trajet : '+list.join(' ; ')+extra+'</p>':'<p class="tleg">Aucune zone de danger connue à moins de 300 m du trajet.</p>')+'</div>';
+  return '<div class="tmapbox"><canvas class="tmap" data-i="'+i+'" aria-label="Carte du trajet"></canvas><p class="tleg"><i style="color:var(--accent)">━</i> trajet · <i style="color:var(--bad)">━</i> au-dessus de la limite · <i style="color:var(--warn)">▲</i> zone de danger · numéros = dépassements · touchez la carte pour zoomer · <i style="color:var(--fg-dim)">━</i> routes (carte hors ligne)</p>'+(zn?'<p class="tleg">'+zn+' zone'+(zn>1?'s':'')+' de danger à moins de 300 m du trajet : '+list.join(' ; ')+extra+'</p>':'<p class="tleg">Aucune zone de danger connue à moins de 300 m du trajet.</p>')+'</div>';
 }
 var BASEC={};
 function loadBase(vb){
@@ -970,7 +991,8 @@ function baseRoads(ctx,base,P,w,h,C){
   ctx.globalAlpha=1;
   return vis;
 }
-function baseLabels(ctx,base,vis,P,w,h,C,boxes){
+function baseLabels(ctx,base,vis,P,w,h,C,boxes,zoomHint){
+  zoomHint=zoomHint||1;
   var i;
   function free(r){for(var k=0;k<boxes.length;k++){var b=boxes[k];if(r[0]<b[2]&&r[2]>b[0]&&r[1]<b[3]&&r[3]>b[1])return false}return true}
   function label(txt,x,y,font,color){
@@ -981,20 +1003,28 @@ function baseLabels(ctx,base,vis,P,w,h,C,boxes){
   ctx.textAlign='center';ctx.textBaseline='middle';ctx.lineJoin='round';
   var rank={city:0,town:1,suburb:3,village:2,hamlet:4},pls=base.pl.slice().sort(function(a,b){return (rank[a[3]]||5)-(rank[b[3]]||5)}),n=0;
   pls.forEach(function(q){
-    if(n>=14)return;var pt=P(q[0],q[1]),big=q[3]==='city'||q[3]==='town';
+    if(n>=14+Math.round(zoomHint*2))return;var pt=P(q[0],q[1]),big=q[3]==='city'||q[3]==='town';
     if(label(q[2],pt[0],pt[1],(big?'700 13px':'600 11px')+' Barlow, system-ui, sans-serif',C('--fg')))n++;
   });
-  var seenN={},nm=0;
+  var seenN={},nm=0,maxN=30+Math.round(zoomHint*10);
   vis.slice().reverse().forEach(function(v){
-    if(nm>=30)return;var name=v.wy.tags.name;if(!name||seenN[name])return;
-    var best=null,bl=0,k;
-    for(k=1;k<v.pp.length;k++){
-      var a=v.pp[k-1],b=v.pp[k],dx=b[0]-a[0],dy=b[1]-a[1],L=Math.sqrt(dx*dx+dy*dy),mx=(a[0]+b[0])/2,my=(a[1]+b[1])/2;
+    if(nm>=maxN)return;var name=v.wy.tags.name;if(!name||seenN[name])return;
+    var pp2=v.pp,cum=[0],k2;
+    for(k2=1;k2<pp2.length;k2++){var ddx=pp2[k2][0]-pp2[k2-1][0],ddy=pp2[k2][1]-pp2[k2-1][1];cum.push(cum[k2-1]+Math.sqrt(ddx*ddx+ddy*ddy))}
+    ctx.font='500 10px Barlow, system-ui, sans-serif';
+    var tw=ctx.measureText(name).width,need=tw+10;
+    if(cum[cum.length-1]<need)return;
+    var best=null,bs=0,i1,j1;
+    for(i1=0;i1<pp2.length-1;i1++){
+      j1=i1+1;while(j1<pp2.length&&cum[j1]-cum[i1]<need)j1++;
+      if(j1>=pp2.length)break;
+      var A=pp2[i1],B=pp2[j1],ch=Math.sqrt((B[0]-A[0])*(B[0]-A[0])+(B[1]-A[1])*(B[1]-A[1])),st=ch/(cum[j1]-cum[i1]);
+      if(st<0.9)continue;
+      var mx=(A[0]+B[0])/2,my=(A[1]+B[1])/2;
       if(mx<10||mx>w-10||my<10||my>h-10)continue;
-      if(L>bl){bl=L;best=[mx,my,Math.atan2(dy,dx)]}
+      if(st>bs){bs=st;best=[mx,my,Math.atan2(B[1]-A[1],B[0]-A[0])]}
     }
     if(!best)return;
-    ctx.font='500 10px Barlow, system-ui, sans-serif';var tw=ctx.measureText(name).width;if(tw+8>bl)return;
     var ang=best[2];if(ang>Math.PI/2||ang<-Math.PI/2)ang+=Math.PI;
     var hw=(Math.abs(Math.cos(ang))*tw+Math.abs(Math.sin(ang))*10)/2+2,hh=(Math.abs(Math.sin(ang))*tw+Math.abs(Math.cos(ang))*10)/2+2;
     var r=[best[0]-hw,best[1]-hh,best[0]+hw,best[1]+hh];if(!free(r))return;
@@ -1010,7 +1040,7 @@ function baseLabels(ctx,base,vis,P,w,h,C,boxes){
   });
   ctx.textBaseline='alphabetic';
 }
-function drawTripMap(cv,t,base){
+function drawTripMap(cv,t,base,vw){
   var w=cv.clientWidth,h=cv.clientHeight;if(!w||!h||!t||!t.pts||t.pts.length<2)return;
   var dpr=Math.min(window.devicePixelRatio||1,3);
   cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);
@@ -1027,14 +1057,17 @@ function drawTripMap(cv,t,base){
   var la0=(minLa+maxLa)/2,lo0=(minLo+maxLo)/2,kx=111320*Math.cos(la0*rad),ky=111320;
   var spanX=Math.max(300,(maxLo-minLo)*kx),spanY=Math.max(300,(maxLa-minLa)*ky),pad=26;
   var sc=Math.min((w-2*pad)/spanX,(h-2*pad)/spanY);
-  function P(la,lo){return [w/2+(lo-lo0)*kx*sc,h/2-(la-la0)*ky*sc]}
-  var key=t.id+'|'+w;
+  function P0(la,lo){return [w/2+(lo-lo0)*kx*sc,h/2-(la-la0)*ky*sc]}
+  var view=vw||{z:1,px:0,py:0},anc=[w/2,h/2],scz=sc*view.z;
+  cv._anc=anc;
+  function P(la,lo){var q=P0(la,lo);return [anc[0]+(q[0]-anc[0])*view.z+view.px,anc[1]+(q[1]-anc[1])*view.z+view.py]}
+  var key=String(t.id);
   if(base===undefined){
     base=BASEC[key];
     if(base===undefined){
       BASEC[key]=null;
-      var vb=[la0-(h/2)/(ky*sc),la0+(h/2)/(ky*sc),lo0-(w/2)/(kx*sc),lo0+(w/2)/(kx*sc)];
-      loadBase(vb).then(function(b){BASEC[key]=b;if(b&&(b.ways.length||b.pl.length))drawTripMap(cv,t,b)}).catch(function(){});
+      var vb=[la0-(h)/(ky*sc),la0+(h)/(ky*sc),lo0-(w)/(kx*sc),lo0+(w)/(kx*sc)];
+      loadBase(vb).then(function(b){BASEC[key]=b;if(b&&(b.ways.length||b.pl.length))drawTripMap(cv,t,b,vw)}).catch(function(){});
     }
   }
   var hasBase=!!(base&&(base.ways.length||base.pl.length)),vis=null;
@@ -1069,11 +1102,11 @@ function drawTripMap(cv,t,base){
     pp.forEach(function(q,ix){if(ix%2===0)boxes.push([q[0]-7,q[1]-7,q[0]+7,q[1]+7])});
     zs.forEach(function(z){var q=P(z[0],z[1]);boxes.push([q[0]-11,q[1]-12,q[0]+11,q[1]+9])});
     evs.forEach(function(e){if(isFinite(e.lat)){var q=P(e.lat,e.lon);boxes.push([q[0]-10,q[1]-25,q[0]+10,q[1]+2])}});
-    try{baseLabels(ctx,base,vis,P,w,h,C,boxes)}catch(e){}
+    try{baseLabels(ctx,base,vis,P,w,h,C,boxes,view.z)}catch(e){}
   }
-  var steps=[50,100,200,500,1000,2000,5000,10000,20000],len=steps[0];
-  steps.forEach(function(v){if(v*sc<=w*0.3)len=v});
-  var bw=len*sc;ctx.strokeStyle=C('--fg-dim');ctx.lineWidth=2;ctx.lineCap='butt';
+  var steps=[10,20,50,100,200,500,1000,2000,5000,10000,20000],len=steps[0];
+  steps.forEach(function(v){if(v*scz<=w*0.3)len=v});
+  var bw=len*scz;ctx.strokeStyle=C('--fg-dim');ctx.lineWidth=2;ctx.lineCap='butt';
   ctx.beginPath();ctx.moveTo(12,h-12);ctx.lineTo(12+bw,h-12);ctx.moveTo(12,h-17);ctx.lineTo(12,h-7);ctx.moveTo(12+bw,h-17);ctx.lineTo(12+bw,h-7);ctx.stroke();
   ctx.fillStyle=C('--fg-dim');ctx.font='500 11px Barlow, system-ui, sans-serif';ctx.textAlign='left';
   ctx.fillText(len>=1000?(len/1000)+' km':len+' m',12,h-22);
@@ -1309,6 +1342,68 @@ window.addEventListener('online',function(){T.retryAt=0;pump();autoPre()});
 setInterval(autoPre,3600000);
 setTimeout(autoPre,1500);
 if(NAT){var hint=document.querySelector('.hint');if(hint)hint.textContent="Application Android : le GPS et les alertes continuent en arrière-plan, même écran verrouillé, avec une notification permanente. Les alertes sonores baissent la musique le temps du message. La carte se précharge automatiquement autour de vous (environ 15 km) dès que le réseau et la position sont disponibles. Quand la carte n'indique pas de limite, elle est estimée d'après le type de route (« Estimée »).";}
+/* ---------- carte plein écran : zoom, déplacement ---------- */
+var MF=null,MFP={},mfRaf=0;
+function mfDraw(){
+  if(!MF)return;var cv=$('mfCanvas');
+  if(MF.kind==='live')renderTrace(cv,MF.view);
+  else{var t=trips[MF.i];if(t)drawTripMap(cv,t,undefined,MF.view)}
+}
+function mfSoon(){if(mfRaf)return;mfRaf=requestAnimationFrame(function(){mfRaf=0;mfDraw()})}
+window.__mfLive=function(){if(MF&&MF.kind==='live')mfDraw()};
+function mfOpen(kind,i){
+  MF={kind:kind,i:i,view:{z:1,px:0,py:0}};MFP={};
+  $('mapFull').hidden=false;
+  $('mfTitle').textContent=kind==='live'?'Trajet en cours · pincez pour zoomer':'Pincez pour zoomer · glissez pour déplacer';
+  mfDraw();
+}
+function mfClose(){MF=null;MFP={};$('mapFull').hidden=true}
+function mfZoom(k,qx,qy){
+  if(!MF)return;var v=MF.view,cv=$('mfCanvas'),c=cv._anc||[cv.clientWidth/2,cv.clientHeight/2];
+  var nz=Math.max(1,Math.min(80,v.z*k));k=nz/v.z;
+  v.px=qx-c[0]-(qx-c[0]-v.px)*k;v.py=qy-c[1]-(qy-c[1]-v.py)*k;v.z=nz;
+  if(nz===1&&k<1){v.px*=0.5;v.py*=0.5}
+  mfSoon();
+}
+(function(){
+  var cv=$('mfCanvas');if(!cv||!cv.addEventListener)return;
+  function pos(e){var r=cv.getBoundingClientRect();return [e.clientX-r.left,e.clientY-r.top]}
+  function metrics(){
+    var ids=Object.keys(MFP);if(ids.length<2)return null;
+    var a=MFP[ids[0]],b=MFP[ids[1]];
+    return {d:Math.sqrt((a[0]-b[0])*(a[0]-b[0])+(a[1]-b[1])*(a[1]-b[1]))||1,m:[(a[0]+b[0])/2,(a[1]+b[1])/2]};
+  }
+  var lastM=null,lastTap=0;
+  cv.addEventListener('pointerdown',function(e){
+    try{cv.setPointerCapture(e.pointerId)}catch(_){}
+    MFP[e.pointerId]=pos(e);lastM=metrics();
+    var n=Date.now();if(Object.keys(MFP).length===1){if(n-lastTap<300){var q=pos(e);mfZoom(2,q[0],q[1])}lastTap=n}
+  });
+  cv.addEventListener('pointermove',function(e){
+    if(!MFP[e.pointerId]||!MF)return;
+    var old=MFP[e.pointerId],q=pos(e);MFP[e.pointerId]=q;
+    var ids=Object.keys(MFP);
+    if(ids.length===1){MF.view.px+=q[0]-old[0];MF.view.py+=q[1]-old[1];mfSoon()}
+    else{
+      var m=metrics();
+      if(m&&lastM){MF.view.px+=m.m[0]-lastM.m[0];MF.view.py+=m.m[1]-lastM.m[1];mfZoom(m.d/lastM.d,m.m[0],m.m[1])}
+      lastM=m;
+    }
+  });
+  function up(e){delete MFP[e.pointerId];lastM=metrics()}
+  cv.addEventListener('pointerup',up);cv.addEventListener('pointercancel',up);
+  cv.addEventListener('wheel',function(e){e.preventDefault();var q=pos(e);mfZoom(Math.exp(-e.deltaY*0.0025),q[0],q[1])},{passive:false});
+  $('mfIn').addEventListener('click',function(){mfZoom(1.7,cv.clientWidth/2,cv.clientHeight/2)});
+  $('mfOut').addEventListener('click',function(){mfZoom(1/1.7,cv.clientWidth/2,cv.clientHeight/2)});
+  $('mfReset').addEventListener('click',function(){if(MF){MF.view={z:1,px:0,py:0};mfSoon()}});
+  $('mfClose').addEventListener('click',mfClose);
+  window.addEventListener('resize',function(){if(MF)mfSoon()});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape')mfClose()});
+})();
+$('trace').addEventListener('click',function(){mfOpen('live')});
+$('jList').addEventListener('click',function(e){
+  var c=e.target;if(c&&c.classList&&c.classList.contains('tmap')){var t=trips[+c.dataset.i];if(t)mfOpen('trip',+c.dataset.i)}
+});
 $('jList').addEventListener('toggle',function(e){
   var d=e.target;if(!d||!d.classList||!d.classList.contains('trip')||!d.open)return;
   var cv=d.querySelector('canvas.tmap');if(cv){var t=trips[+cv.dataset.i];if(t)drawTripMap(cv,t)}
