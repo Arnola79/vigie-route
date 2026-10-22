@@ -211,7 +211,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v18</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v19</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -543,7 +543,7 @@ function handleOver(f,lim,over){
     else{var c=tr.cur;c.t1=f.t;c.sum+=S.speed;c.n++;if(S.speed>c.max){c.max=S.speed;c.limit=lim;c.est=est;c.lat=f.lat;c.lon=f.lon;c.zone=zn||c.zone}}
     tr.lastOverT=f.t;
     if(confirmed(tr)){
-      if(!tr.cur.spoken){tr.cur.spoken=true;say('Vitesse excessive, limite '+(est?'estimée ':'')+lim);buzz([300,120,300]);beep(520,0.35,0,0.3);S.lastBeepAt=f.t}
+      if(!tr.cur.spoken){tr.cur.spoken=true;say('Vitesse excessive, limite '+(S.limSrc==='incertaine'?'incertaine ':(est?'estimée ':''))+lim);buzz([300,120,300]);beep(520,0.35,0,0.3);S.lastBeepAt=f.t}
       else if(f.t-S.lastBeepAt>=10000){beep(520,0.3,0,0.25);buzz(250);S.lastBeepAt=f.t}
     }
   }else if(tr.cur&&f.t-tr.lastOverT>=END_OVER_MS){closeCur(tr)}
