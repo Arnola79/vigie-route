@@ -221,6 +221,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 .navc-top b{font:700 30px/1 var(--font-num);color:var(--accent);font-variant-numeric:tabular-nums}
 .navc-x{width:36px;height:36px;border-radius:8px;border:1px solid var(--line);background:none;color:var(--fg-dim);font-size:16px;cursor:pointer}
 .navc-txt{font-size:18px;font-weight:600;line-height:1.3}
+.navc-inc{font-size:14px;font-weight:600;color:var(--warn)}
 .navc-sub{font-size:13px;color:var(--fg-dim)}
 .rt-map{width:100%;height:300px;display:block;border-radius:10px;background:var(--surface-2);border:1px solid var(--line)}
 .rt-steps{margin:0;padding:0 16px 14px 36px;display:grid;gap:6px;font-size:14px}
@@ -236,7 +237,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v28</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v29</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -245,6 +246,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
       <div class="navc-top"><b id="navDist"></b><button type="button" class="navc-x" id="navX" aria-label="Arrêter le guidage">✕</button></div>
       <div class="navc-txt" id="navTxt"></div>
       <div class="navc-sub" id="navSub"></div>
+      <div class="navc-inc" id="navInc" hidden></div>
     </div>
     <div class="card gauge" id="gauge" data-state="ok">
       <div class="gauge-main">
@@ -373,6 +375,8 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
         <summary style="cursor:pointer;font-size:13px;color:var(--fg-dim)">Moteur de calcul : <b id="rtEngName">Valhalla</b></summary>
         <label style="margin-top:8px">Clé TomTom (gratuite, developer.tomtom.com)<input type="text" id="rtKey" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Collez votre clé ici"></label>
         <p style="margin:6px 0 0;font-size:12px;color:var(--fg-dim)">Avec une clé, les temps tiennent compte des vitesses réellement pratiquées. La clé reste sur ce téléphone.</p>
+        <label style="display:flex;gap:10px;align-items:center;margin-top:10px;text-transform:none;letter-spacing:0;font-size:14px;color:var(--fg)"><input type="checkbox" id="incOn"> Incidents en temps réel pendant le guidage</label>
+        <p id="incInfo" style="margin:4px 0 0;font-size:12px;color:var(--fg-dim)"></p>
       </details>
     </div>
     <div class="card rt-sum" id="rtSum" hidden></div>
@@ -1898,6 +1902,66 @@ function ttCompute(a,b,cap,extra,live){
     });
   });
 }
+/* ---------- incidents TomTom en temps réel (quota gratuit : 2 500 / mois) ---------- */
+var INC={raw:[],list:[],at:0,busy:false,said:{}};
+var INC_MAX=2000,INC_EVERY=10*60000,INC_AHEAD=60;
+var INC_CAT={1:'Accident',2:'Brouillard',3:'Conditions dangereuses',4:'Pluie',5:'Verglas',6:'Bouchon',7:'Voie fermée',8:'Route fermée',9:'Travaux',10:'Vent fort',11:'Inondation',14:'Véhicule en panne'};
+function incCount(){var m=new Date().toISOString().slice(0,7),c=LS.get('ttinc',null);if(!c||c.m!==m)c={m:m,n:0};return c}
+function incOn(){return LS.get('incon',true)!==false}
+function incUI(){var c=incCount();var el=$('incInfo');if(el)el.textContent='Utilisé ce mois : '+c.n+' / '+INC_MAX+' (gratuit jusqu\'à 2 500)';var cb=$('incOn');if(cb)cb.checked=incOn()}
+function incFetch(){
+  if(!NAV||!NAV.on||INC.busy||!ttKey()||!incOn()||navigator.onLine===false)return;
+  if(Date.now()-INC.at<INC_EVERY)return;
+  var c=incCount();if(c.n>=INC_MAX)return;
+  var r=NAV.r,P=r.pts,i0=NAV.idx,lim=r.cum[i0]+INC_AHEAD,a=90,b=-90,cMin=180,cMax=-180;
+  for(var i=i0;i<P.length&&r.cum[i]<=lim;i++){a=Math.min(a,P[i][0]);b=Math.max(b,P[i][0]);cMin=Math.min(cMin,P[i][1]);cMax=Math.max(cMax,P[i][1])}
+  if(a>b)return;
+  a-=0.01;b+=0.01;cMin-=0.01;cMax+=0.01;
+  var area=(b-a)*111*(cMax-cMin)*111*Math.cos((a+b)/2*rad);
+  if(area>9000){var k=Math.sqrt(9000/area),mLa=(a+b)/2,mLo=(cMin+cMax)/2;a=mLa-(mLa-a)*k;b=mLa+(b-mLa)*k;cMin=mLo-(mLo-cMin)*k;cMax=mLo+(cMax-mLo)*k}
+  INC.busy=true;INC.at=Date.now();c.n++;LS.set('ttinc',c);incUI();
+  var f='{incidents{type,geometry{type,coordinates},properties{id,iconCategory,events{description},from,to,length,delay,roadNumbers}}}';
+  var url='https://api.tomtom.com/traffic/services/5/incidentDetails?key='+encodeURIComponent(ttKey())+'&bbox='+[cMin,a,cMax,b].map(function(v){return v.toFixed(4)}).join(',')+
+    '&fields='+encodeURIComponent(f)+'&language=fr-FR&timeValidityFilter=present';
+  fetchJson(url,20000).then(function(j){INC.raw=(j&&j.incidents)||[];incMatch()}).catch(function(){INC.at=Date.now()-INC_EVERY+120000})
+    .then(function(){INC.busy=false});
+}
+/* garde les incidents situés sur l'itinéraire, dans le sens de circulation */
+function incMatch(){
+  if(!NAV)return;
+  var r=NAV.r,P=r.pts,i0=Math.max(0,NAV.idx-5),out=[];
+  var i1=i0;while(i1<P.length-1&&r.cum[i1]<r.cum[NAV.idx]+INC_AHEAD+5)i1++;
+  INC.raw.forEach(function(x){
+    var g=x.geometry||{},co=g.type==='Point'?[g.coordinates]:(g.coordinates||[]);if(!co.length)return;
+    var smp=[co[0],co[Math.floor(co.length/2)],co[co.length-1]],best=null;
+    smp.forEach(function(c){
+      var q={lat:c[1],lon:c[0]};
+      for(var i=i0;i<=i1;i++){if(Math.abs(P[i][0]-q.lat)>0.01)continue;var d=dist(q,{lat:P[i][0],lon:P[i][1]});if(!best||d<best.d)best={d:d,i:i}}
+    });
+    if(!best||best.d>80)return;
+    if(co.length>1){
+      var s={lat:co[0][1],lon:co[0][0]},e={lat:co[co.length-1][1],lon:co[co.length-1][0]};
+      var j=Math.min(P.length-1,best.i+8),rb=bearing({lat:P[best.i][0],lon:P[best.i][1]},{lat:P[j][0],lon:P[j][1]});
+      if(dist(s,e)>80&&angDiff(bearing(s,e),rb)>100)return;
+    }
+    var p=x.properties||{},ev=(p.events||[]).map(function(e){return e.description}).filter(Boolean);
+    var txt=ev[0]||INC_CAT[p.iconCategory]||'Incident';
+    out.push({id:p.id||txt+best.i,off:r.cum[best.i],txt:txt,len:p.length||0,road:(p.roadNumbers||[])[0]||'',delay:p.delay||0});
+  });
+  out.sort(function(x,y){return x.off-y.off});
+  INC.list=out;
+}
+function incNext(){
+  if(!NAV||!NAV.on)return null;
+  for(var i=0;i<INC.list.length;i++)if(INC.list[i].off+(INC.list[i].len||0)/1000>NAV.off)return INC.list[i];
+  return null;
+}
+function incTick(){
+  incFetch();
+  var x=incNext();if(!x)return;
+  var dm=(x.off-NAV.off)*1000,far=S.speed>90?3000:1000;
+  if(dm<=far&&!INC.said[x.id]){INC.said[x.id]=1;say('Attention, '+x.txt+(dm>150?' dans '+(dm>=1000?(Math.round(dm/100)/10).toString().replace('.',',')+' kilomètres':Math.round(dm/50)*50+' mètres'):'')+'.');buzz([200,100,200])}
+}
 /* ---------- guidage sur l'itinéraire choisi ---------- */
 var NAV=null;
 function navPrep(r){
@@ -1908,6 +1972,7 @@ function navPrep(r){
 }
 function navStart(r){
   if(S.mode==='demo'){toast('Arrêtez la démo avant de suivre un itinéraire.');return}
+  INC={raw:[],list:[],at:0,busy:false,said:{}};
   NAV={r:navPrep(r),idx:0,off:0,mi:0,said:{},offN:0,lastRe:0,b:RT.b,cap:RT.cap,on:false,arrived:false};
   showTab('trajet');
   if(S.mode==='idle')startLive();
@@ -1944,6 +2009,7 @@ function navTick(f){
     if(dm<=far&&dm>near*1.5&&!NAV.said[NAV.mi+'f']){NAV.said[NAV.mi+'f']=1;say('Dans '+(dm>=1000?(Math.round(dm/100)/10).toString().replace('.',',')+' kilomètres':Math.round(dm/50)*50+' mètres')+', '+nx.txt)}
     else if(dm<=near&&!NAV.said[NAV.mi+'n']){NAV.said[NAV.mi+'f']=1;NAV.said[NAV.mi+'n']=1;say(nx.txt)}
   }
+  incTick();
   navRender();
   /* limitation TomTom de la portion où l'on roule */
   var lims=r.lims||[];
@@ -1959,7 +2025,7 @@ function navReroute(f){
     var pts=[[f.lat,f.lon]].concat(plan.wps.slice(L+1)),av=plan.avoid.slice(L);
     p=ttRoute(pts,av,{cap:NAV.cap,guide:true});
   }else p=valhalla(cur,NAV.b,{cap:NAV.cap}).then(function(l){return l[0]});
-  p.then(function(r){if(!NAV)return;var said=NAV.said;NAV.r=navPrep(r);NAV.idx=0;NAV.off=0;NAV.mi=0;NAV.said={};NAV.on=false;NAV.offN=0;if(S.last)navTick(S.last);navRender()})
+  p.then(function(r){if(!NAV)return;var said=NAV.said;NAV.r=navPrep(r);NAV.idx=0;NAV.off=0;NAV.mi=0;NAV.said={};NAV.on=false;NAV.offN=0;if(S.last)navTick(S.last);incMatch();navRender()})
    .catch(function(){toast('Recalcul impossible pour le moment.')})
    .then(function(){if(NAV)NAV.busy=false});
 }
@@ -1975,6 +2041,9 @@ function navRender(){
   $('navTxt').textContent=nx?nx.txt:'Continuez jusqu\'à l\'arrivée';
   $('navDist').textContent=nx?fmtDist((nx.off-NAV.off)*1000):'';
   $('navSub').textContent='Arrivée dans '+fmtDist(left*1000)+' · vers '+eta.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+  var ix=incNext(),ie=$('navInc');
+  if(ix&&(ix.off-NAV.off)<INC_AHEAD){ie.hidden=false;ie.textContent='⚠ '+ix.txt+' · '+(ix.off<=NAV.off?'en cours':'dans '+fmtDist((ix.off-NAV.off)*1000))+(ix.road?' ('+ix.road+')':'')+(ix.delay>=60?' · +'+Math.round(ix.delay/60)+' min':'')}
+  else ie.hidden=true;
 }
 function rtFinish(base,list,beyond,note){
   RT.a=base.a;RT.b=base.b;RT.cap=base.cap;RT.extra=base.extra;RT.free=base.free;RT.fast=base.fast;RT.note=note||'';
@@ -2042,6 +2111,7 @@ $('navX').addEventListener('click',function(){navStop('Guidage arrêté. Le traj
 function rtEngUI(){var k=ttKey();$('rtEngName').textContent=k?'TomTom':'Valhalla (approximatif sur petites routes)';$('rtKey').value=k}
 $('rtKey').addEventListener('change',function(){var v=$('rtKey').value.replace(/\s+/g,'');LS.set('ttkey',v);rtEngUI();toast(v?'Clé TomTom enregistrée.':'Clé retirée : calcul par Valhalla.')});
 rtEngUI();
+$('incOn').addEventListener('change',function(){LS.set('incon',$('incOn').checked)});incUI();
 ['rtFrom','rtTo','rtCap','rtExtra'].forEach(function(id){$(id).addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();$(id).blur();rtCompute()}})});
 $('rtHere').addEventListener('click',function(){$('rtFrom').value='Ma position';toast('Départ : votre position au moment du calcul.')});
 $('rtOpts').addEventListener('click',function(e){var b=e.target.closest('.rt-opt');if(!b)return;RT.sel=+b.dataset.i;Array.prototype.forEach.call($('rtOpts').children,function(x,i){x.setAttribute('aria-pressed',String(i===RT.sel))});rtSteps();rtDraw()});
