@@ -203,6 +203,24 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 .tabs button{flex:1;display:grid;justify-items:center;gap:2px;background:none;border:0;color:var(--fg-dim);font:600 12px var(--font-body);padding:6px 0;border-radius:8px;min-height:50px;cursor:pointer}
 .tabs button[aria-selected="true"]{color:var(--accent);background:var(--surface-2)}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(78px + env(safe-area-inset-bottom,0px));width:max-content;max-width:min(92vw,480px);background:var(--fg);color:var(--bg);padding:10px 14px;border-radius:8px;font-weight:500;font-size:14px;z-index:30}
+/* Itinéraire plafonné */
+.rform{display:grid;gap:10px;padding:14px 16px}
+.rform label{display:grid;gap:4px;font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--fg-dim);min-width:0}
+.rform .inl{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end}
+.rform .btn.sq{width:46px;height:46px;padding:0;font-size:18px}
+.rform .cap{display:grid;grid-template-columns:minmax(0,1fr) 110px;gap:8px;align-items:end}
+.rt-opts{display:grid;gap:8px}
+.rt-opt{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;text-align:left;padding:12px 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--fg);font:inherit;cursor:pointer;width:100%}
+.rt-opt[aria-pressed="true"]{border-color:var(--accent);background:var(--surface-2);box-shadow:inset 3px 0 0 var(--accent)}
+.rt-opt .t{font:700 28px/1 var(--font-num);font-variant-numeric:tabular-nums}
+.rt-opt .tag{align-self:center;justify-self:end;font-size:11px;letter-spacing:.07em;text-transform:uppercase;font-weight:700;color:var(--accent-ink);background:var(--ok);border-radius:6px;padding:3px 8px}
+.rt-opt .m{grid-column:1/-1;font-size:13px;color:var(--fg-dim);font-variant-numeric:tabular-nums}
+.rt-map{width:100%;height:300px;display:block;border-radius:10px;background:var(--surface-2);border:1px solid var(--line)}
+.rt-steps{margin:0;padding:0 16px 14px 36px;display:grid;gap:6px;font-size:14px}
+.rt-steps small{color:var(--fg-dim);font-variant-numeric:tabular-nums}
+.rt-sum{padding:12px 16px;font-size:14px;color:var(--fg-dim);display:grid;gap:4px}
+.rt-sum b{color:var(--fg)}
+.rt-sum.err{color:var(--bad)}
 @media (prefers-reduced-motion: reduce){
   .gauge,.zone,.meter .fill,.meter .tick,.zone-bar i{transition:none}
 }
@@ -211,7 +229,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v20</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v21</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -320,12 +338,40 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
       <button class="btn danger" id="btnClearLog" type="button">Effacer</button>
     </div>
   </section>
+  <section class="panel" id="tab-route" role="tabpanel" aria-label="Itinéraire" hidden>
+    <div class="card note">
+      <h2>Itinéraire plafonné</h2>
+      <p>Cherche le trajet le plus rapide quand votre vitesse ne dépasse jamais le plafond choisi (110 km/h par défaut) : les autoroutes à 130 sont comptées à 110, et un autre itinéraire peut alors devenir meilleur.</p>
+    </div>
+    <div class="card rform">
+      <div class="inl">
+        <label>Départ<input type="text" id="rtFrom" placeholder="Ma position" autocomplete="off" enterkeyhint="next"></label>
+        <button class="btn sq" type="button" id="rtHere" aria-label="Utiliser ma position">⌖</button>
+      </div>
+      <label>Arrivée<input type="text" id="rtTo" placeholder="Ville, adresse ou lat, lon" autocomplete="off" enterkeyhint="go"></label>
+      <div class="cap">
+        <label>Plafond de vitesse (km/h)<input type="number" id="rtCap" inputmode="numeric" min="60" max="130" step="5" value="110"></label>
+        <button class="btn primary" type="button" id="rtGo">Calculer</button>
+      </div>
+    </div>
+    <div class="card rt-sum" id="rtSum" hidden></div>
+    <div class="rt-opts" id="rtOpts"></div>
+    <canvas class="rt-map" id="rtMap" aria-label="Carte de l'itinéraire" hidden></canvas>
+    <details class="card" id="rtDet" hidden>
+      <summary style="padding:12px 16px;cursor:pointer;font-weight:600">Étapes</summary>
+      <ol class="rt-steps" id="rtSteps"></ol>
+    </details>
+    <p class="hint" style="padding:0">Calcul par Valhalla et adresses par Photon (données OpenStreetMap) : votre départ et votre arrivée sont envoyés à ces services publics. Les temps sont des estimations sans trafic.</p>
+  </section>
 </div>
 
 <nav class="tabs" aria-label="Sections">
   <div class="tabs-in" role="tablist">
     <button type="button" role="tab" id="tb-trajet" data-tab="trajet" aria-selected="true">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 18a9 9 0 1 1 16 0"/><path d="M12 15l4-6"/><circle cx="12" cy="15" r="1.2"/></svg>Trajet
+    </button>
+    <button type="button" role="tab" id="tb-route" data-tab="route" aria-selected="false">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M8 19h6a3.5 3.5 0 0 0 0-7h-4a3.5 3.5 0 0 1 0-7h6"/></svg>Itinéraire
     </button>
     <button type="button" role="tab" id="tb-zones" data-tab="zones" aria-selected="false">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l9.5 17h-19z"/><path d="M12 10v4.5"/><path d="M12 17.4v.1"/></svg>Zones
@@ -1285,13 +1331,14 @@ function demoTick(){
 
 /* ---------- interactions ---------- */
 function showTab(name){
-  ['trajet','zones','journal'].forEach(function(n){
+  ['trajet','route','zones','journal'].forEach(function(n){
     $('tab-'+n).hidden=n!==name;
     $('tb-'+n).setAttribute('aria-selected',String(n===name));
   });
   if(name==='journal')renderJournal();
   if(name==='zones')renderZones();
   if(name==='trajet')renderTrace();
+  if(name==='route')rtDraw();
   window.scrollTo(0,0);
 }
 document.querySelector('.tabs').addEventListener('click',function(e){var b=e.target.closest('button[data-tab]');if(b)showTab(b.dataset.tab)});
@@ -1517,6 +1564,167 @@ function renderOvr(){
     close();
   });
 })();
+
+/* ---------- itinéraire plafonné ---------- */
+var VALHALLA='https://valhalla1.openstreetmap.de/route';
+var PHOTON='https://photon.komoot.io/api/';
+var NOMINATIM='https://nominatim.openstreetmap.org/search';
+var RT={routes:[],sel:0,a:null,b:null,cap:110,free:null,tok:0,tiles:{}};
+(function(){var q=LS.get('rtq',null);if(q&&typeof q==='object'){$('rtFrom').value=String(q.from||'').slice(0,120);$('rtTo').value=String(q.to||'').slice(0,120);var c=Math.round(num(q.cap));if(c>=60&&c<=130)$('rtCap').value=c}})();
+
+function decodeP6(str){
+  var pts=[],i=0,lat=0,lon=0,n=str.length,b,sh,r;
+  while(i<n){
+    sh=0;r=0;do{b=str.charCodeAt(i++)-63;r|=(b&31)<<sh;sh+=5}while(b>=32&&i<n);
+    lat+=(r&1)?~(r>>1):(r>>1);
+    sh=0;r=0;do{b=str.charCodeAt(i++)-63;r|=(b&31)<<sh;sh+=5}while(b>=32&&i<n);
+    lon+=(r&1)?~(r>>1):(r>>1);
+    pts.push([lat/1e6,lon/1e6]);
+  }
+  return pts;
+}
+function fetchJson(url,ms){
+  var ctl=window.AbortController?new AbortController():null,t=ctl?setTimeout(function(){ctl.abort()},ms):0;
+  return fetch(url,{signal:ctl?ctl.signal:undefined}).then(function(r){clearTimeout(t);if(!r.ok)throw new Error('HTTP '+r.status);return r.json()},function(e){clearTimeout(t);throw e});
+}
+function parseLL(s){
+  var m=String(s).match(/^\s*(-?\d{1,3}(?:[.,]\d+)?)\s*(?:[;]|,\s|\s)\s*(-?\d{1,3}(?:[.,]\d+)?)\s*$/);
+  if(!m)return null;var la=num(m[1]),lo=num(m[2]);
+  return okZone(la,lo)?{lat:la,lon:lo,name:la.toFixed(4)+', '+lo.toFixed(4)}:null;
+}
+function herePos(){
+  var p=S.last||nativePos();
+  if(p)return Promise.resolve({lat:p.lat,lon:p.lon,name:'Ma position'});
+  return new Promise(function(res,rej){
+    if(!navigator.geolocation){rej(new Error('Position indisponible : saisissez un départ.'));return}
+    navigator.geolocation.getCurrentPosition(function(g){res({lat:g.coords.latitude,lon:g.coords.longitude,name:'Ma position'})},
+      function(){rej(new Error('Position indisponible : saisissez un départ.'))},{enableHighAccuracy:false,timeout:10000,maximumAge:120000});
+  });
+}
+function geocode(q){
+  var ll=parseLL(q);if(ll)return Promise.resolve(ll);
+  var p=S.last||nativePos();
+  var bias=p?'&lat='+p.lat.toFixed(3)+'&lon='+p.lon.toFixed(3):'';
+  return fetchJson(PHOTON+'?limit=1&lang=fr&q='+encodeURIComponent(q)+bias,12000).then(function(j){
+    var f=j&&j.features&&j.features[0];if(!f||!f.geometry)throw new Error('nf');
+    var c=f.geometry.coordinates,pr=f.properties||{};
+    var nm=pr.name||((pr.housenumber?pr.housenumber+' ':'')+(pr.street||''))||q;
+    var city=pr.city||pr.town||pr.village||'';
+    var lab=[nm,city&&city!==nm?city:'',pr.postcode||''].filter(Boolean).join(', ');
+    return {lat:c[1],lon:c[0],name:lab};
+  }).catch(function(){
+    return fetchJson(NOMINATIM+'?format=jsonv2&limit=1&accept-language=fr&q='+encodeURIComponent(q),12000).then(function(j){
+      if(!j||!j[0])throw new Error('Adresse introuvable : '+q);
+      return {lat:+j[0].lat,lon:+j[0].lon,name:String(j[0].display_name||q).split(',').slice(0,2).join(',').trim()};
+    });
+  });
+}
+function parseTrip(t){
+  var pts=[],man=[];
+  (t.legs||[]).forEach(function(l){
+    pts=pts.concat(decodeP6(l.shape||''));
+    (l.maneuvers||[]).forEach(function(m){if(m.instruction)man.push({txt:m.instruction,len:m.length||0})});
+  });
+  return {time:t.summary.time,len:t.summary.length,pts:pts,man:man};
+}
+function valhalla(a,b,cap,alts){
+  var req={locations:[{lat:a.lat,lon:a.lon},{lat:b.lat,lon:b.lon}],costing:'auto',directions_options:{language:'fr-FR',units:'kilometers'}};
+  if(cap)req.costing_options={auto:{top_speed:cap}};
+  if(alts)req.alternates=alts;
+  return fetchJson(VALHALLA+'?json='+encodeURIComponent(JSON.stringify(req)),30000).then(function(j){
+    if(!j||!j.trip)throw new Error((j&&j.error)||'Aucun itinéraire trouvé.');
+    return [j.trip].concat((j.alternates||[]).map(function(x){return x&&x.trip})).filter(function(t){return t&&t.summary}).map(parseTrip);
+  });
+}
+function fmtHM(sec){var m=Math.round(sec/60);if(m<60)return m+' min';var h=Math.floor(m/60);return h+' h '+String(m%60).padStart(2,'0')}
+function rtSum(html,err){var el=$('rtSum');el.className='card rt-sum'+(err?' err':'');el.innerHTML=html;el.hidden=!html}
+function rtErr(e){
+  var m=e&&e.message?e.message:'Erreur';
+  if(e&&e.name==='AbortError')m='Le service ne répond pas. Réessayez.';
+  else if(navigator.onLine===false||/Failed to fetch|NetworkError|Load failed/i.test(m))m='Pas de connexion au service d\'itinéraires.';
+  else if(/HTTP 400|HTTP 4\d\d/.test(m)&&!/Adresse/.test(m))m='Itinéraire impossible entre ces deux points (route introuvable ?).';
+  return m;
+}
+function rtCompute(){
+  if(!navigator.onLine&&navigator.onLine!==undefined){rtSum('Pas de connexion.',true);return}
+  var from=$('rtFrom').value.trim(),to=$('rtTo').value.trim(),cap=Math.round(num($('rtCap').value));
+  if(!to){toast('Saisissez une arrivée.');return}
+  if(!(cap>=60&&cap<=130)){toast('Plafond entre 60 et 130 km/h.');return}
+  LS.set('rtq',{from:from,to:to,cap:cap});
+  var tok=++RT.tok,go=$('rtGo');go.disabled=true;go.textContent='Calcul…';
+  rtSum('Recherche de l\'itinéraire…');
+  var pa=(!from||/^ma position$/i.test(from))?herePos():geocode(from);
+  Promise.all([pa,geocode(to)]).then(function(ab){
+    if(tok!==RT.tok)return;
+    var a=ab[0],b=ab[1];
+    return Promise.all([valhalla(a,b,cap,2),valhalla(a,b,null,0).catch(function(){return null})]).then(function(r){
+      if(tok!==RT.tok)return;
+      var rs=r[0].slice().sort(function(x,y){return x.time-y.time});
+      RT.a=a;RT.b=b;RT.cap=cap;RT.routes=rs;RT.sel=0;RT.free=r[1]&&r[1][0]||null;
+      rtShow();
+    });
+  }).catch(function(e){if(tok===RT.tok){RT.routes=[];rtShow();rtSum(esc(rtErr(e)),true)}})
+    .then(function(){if(tok===RT.tok){go.disabled=false;go.textContent='Calculer'}});
+}
+function rtShow(){
+  var rs=RT.routes,box=$('rtOpts');
+  $('rtMap').hidden=!rs.length;$('rtDet').hidden=!rs.length;
+  if(!rs.length){box.innerHTML='';return}
+  rtSum('<span><b>'+esc(RT.a.name)+'</b> → <b>'+esc(RT.b.name)+'</b></span><span>Plafond '+RT.cap+' km/h'+(RT.free?' · sans plafond : '+fmtHM(RT.free.time)+', '+Math.round(RT.free.len)+' km':'')+'</span>');
+  box.innerHTML=rs.map(function(r,i){
+    var avg=r.time>0?Math.round(r.len/(r.time/3600)):0;
+    var d=RT.free?Math.round((r.time-RT.free.time)/60):null;
+    var cmp=d==null?'':d<=0?' · aussi rapide que sans plafond':' · +'+d+' min par rapport à sans plafond';
+    return '<button type="button" class="rt-opt" data-i="'+i+'" aria-pressed="'+(i===RT.sel)+'"><span class="t">'+fmtHM(r.time)+'</span>'+(i===0?'<span class="tag">Meilleur</span>':'<span></span>')+
+      '<span class="m">'+(Math.round(r.len*10)/10).toString().replace('.',',')+' km · '+avg+' km/h de moyenne'+cmp+'</span></button>';
+  }).join('');
+  rtSteps();rtDraw();
+}
+function rtSteps(){
+  var r=RT.routes[RT.sel];if(!r)return;
+  $('rtSteps').innerHTML=r.man.map(function(m){return '<li>'+esc(m.txt)+(m.len?' <small>('+fmtDist(m.len*1000)+')</small>':'')+'</li>'}).join('');
+}
+function mer(lat,lon,z){var s=256*Math.pow(2,z),sn=Math.sin(clamp(lat,-85,85)*rad);return [(lon+180)/360*s,(0.5-Math.log((1+sn)/(1-sn))/(4*Math.PI))*s]}
+function rtDraw(){
+  var cv=$('rtMap'),rs=RT.routes;
+  if(!rs.length||cv.hidden)return;
+  var W=cv.clientWidth,H=cv.clientHeight;if(!W||!H)return;
+  var dpr=Math.min(3,window.devicePixelRatio||1);
+  cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);
+  var ctx=cv.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);
+  var mn=[90,180],mx=[-90,-180];
+  rs.forEach(function(r){r.pts.forEach(function(p){mn[0]=Math.min(mn[0],p[0]);mx[0]=Math.max(mx[0],p[0]);mn[1]=Math.min(mn[1],p[1]);mx[1]=Math.max(mx[1],p[1])})});
+  var pad=28,z=3;
+  for(var k=17;k>=3;k--){var A=mer(mx[0],mn[1],k),B=mer(mn[0],mx[1],k);if(B[0]-A[0]<=W-2*pad&&B[1]-A[1]<=H-2*pad){z=k;break}}
+  var A2=mer(mx[0],mn[1],z),B2=mer(mn[0],mx[1],z),cx=(A2[0]+B2[0])/2,cy=(A2[1]+B2[1])/2,ox=cx-W/2,oy=cy-H/2;
+  ctx.fillStyle=getComputedStyle(document.body).getPropertyValue('--surface-2')||'#1a3043';ctx.fillRect(0,0,W,H);
+  var n=Math.pow(2,z),tmax=0;
+  for(var tx=Math.floor(ox/256);tx<=Math.floor((ox+W)/256);tx++){
+    for(var ty=Math.floor(oy/256);ty<=Math.floor((oy+H)/256);ty++){
+      if(ty<0||ty>=n||++tmax>16)continue;
+      var u='https://tile.openstreetmap.org/'+z+'/'+(((tx%n)+n)%n)+'/'+ty+'.png',im=RT.tiles[u];
+      if(!im){im=new Image();im.onload=rtDraw;im.onerror=function(){};im.src=u;RT.tiles[u]=im}
+      if(im.complete&&im.naturalWidth)ctx.drawImage(im,tx*256-ox,ty*256-oy,256,256);
+    }
+  }
+  ctx.fillStyle='rgba(12,23,34,.18)';ctx.fillRect(0,0,W,H);
+  function path(r){ctx.beginPath();r.pts.forEach(function(p,i){var q=mer(p[0],p[1],z);if(i)ctx.lineTo(q[0]-ox,q[1]-oy);else ctx.moveTo(q[0]-ox,q[1]-oy)})}
+  ctx.lineJoin='round';ctx.lineCap='round';
+  rs.forEach(function(r,i){if(i===RT.sel)return;path(r);ctx.strokeStyle='#ffffff';ctx.lineWidth=6;ctx.stroke();ctx.strokeStyle='#7d8ea0';ctx.lineWidth=3.5;ctx.stroke()});
+  var r=rs[RT.sel];path(r);ctx.strokeStyle='#ffffff';ctx.lineWidth=8;ctx.stroke();ctx.strokeStyle='#1766c8';ctx.lineWidth=5;ctx.stroke();
+  [[RT.a,'A','#41d093'],[RT.b,'B','#ff6464']].forEach(function(m){
+    var q=mer(m[0].lat,m[0].lon,z),x=q[0]-ox,y=q[1]-oy;
+    ctx.beginPath();ctx.arc(x,y,11,0,Math.PI*2);ctx.fillStyle=m[2];ctx.fill();ctx.lineWidth=2.5;ctx.strokeStyle='#fff';ctx.stroke();
+    ctx.fillStyle='#10151b';ctx.font='700 12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(m[1],x,y+.5);
+  });
+  ctx.fillStyle='rgba(255,255,255,.75)';ctx.fillRect(W-150,H-16,150,16);ctx.fillStyle='#222';ctx.font='10px sans-serif';ctx.textAlign='right';ctx.textBaseline='middle';ctx.fillText('© contributeurs OpenStreetMap',W-4,H-8);
+}
+$('rtGo').addEventListener('click',rtCompute);
+['rtFrom','rtTo','rtCap'].forEach(function(id){$(id).addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();$(id).blur();rtCompute()}})});
+$('rtHere').addEventListener('click',function(){$('rtFrom').value='Ma position';toast('Départ : votre position au moment du calcul.')});
+$('rtOpts').addEventListener('click',function(e){var b=e.target.closest('.rt-opt');if(!b)return;RT.sel=+b.dataset.i;Array.prototype.forEach.call($('rtOpts').children,function(x,i){x.setAttribute('aria-pressed',String(i===RT.sel))});rtSteps();rtDraw()});
+window.addEventListener('resize',function(){if(!$('tab-route').hidden)rtDraw()});
+
 
 renderOvr();render();renderZones();renderJournal();renderOffline();fitSign();
 
