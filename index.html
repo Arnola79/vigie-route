@@ -250,7 +250,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v31</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v32</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -264,6 +264,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
     <div class="card dmap" id="dmapCard" hidden>
       <canvas id="dmap" aria-label="Carte du trajet"></canvas>
       <button type="button" class="dm-btn" id="dmMode" aria-label="Orientation de la carte">⬆</button>
+      <button type="button" class="dm-btn" id="dmMute" style="top:60px" aria-label="Couper le son" aria-pressed="false">🔊</button>
       <div class="dm-spd"><b id="dmSpd">0</b><small>km/h</small><i id="dmLim">–</i></div>
     </div>
     <div class="card gauge" id="gauge" data-state="ok">
@@ -318,6 +319,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
       <div class="row"><span>Tester la carte<small id="mapTest">Vérifie l'accès à OpenStreetMap</small></span><button class="btn" type="button" id="btnMapTest" style="height:40px">Tester</button></div>
       <label class="row"><span>Bip sonore</span><input type="checkbox" id="optSound"></label>
       <label class="row"><span>Voix</span><input type="checkbox" id="optVoice"></label>
+      <label class="row"><span>Couper la musique pendant les annonces<small>Sinon elle est seulement baissée. Nécessite l'APK à jour.</small></span><input type="checkbox" id="optPause"></label>
       <label class="row"><span>Vibrations</span><input type="checkbox" id="optVibe"></label>
       <p class="hint">Le GPS s'arrête quand l'écran se verrouille. L'application garde l'écran allumé pendant un trajet. La limite est lue sur OpenStreetMap : votre position approximative est envoyée au service public Overpass. Quand la carte n'indique pas de limite, elle est estimée d'après le type de route (pointillés, « Estimée »). Sans réseau ou hors route connue, la détection est suspendue.</p>
     </details>
@@ -505,7 +507,7 @@ function toast(msg,ms){var t=$('toast');t.textContent=msg;t.hidden=false;clearTi
 var NAT=(typeof window.VigieNative!=='undefined')?window.VigieNative:null;
 function initAudio(){try{var AC=window.AudioContext||window.webkitAudioContext;if(AC&&!S.ac)S.ac=new AC();if(S.ac&&S.ac.state==='suspended')S.ac.resume()}catch(e){}}
 function beep(freq,dur,delay,vol){
-  if(!settings.sound)return;
+  if(!settings.sound||S.muted||inCall())return;
   if(NAT){try{NAT.beep(freq,Math.round(dur*1000),Math.round((delay||0)*1000))}catch(e){}return}
   if(!S.ac)return;
   try{var t=S.ac.currentTime+(delay||0),o=S.ac.createOscillator(),g=S.ac.createGain();
@@ -513,7 +515,25 @@ function beep(freq,dur,delay,vol){
     g.gain.exponentialRampToValueAtTime(vol||0.25,t+0.02);g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
     o.connect(g);g.connect(S.ac.destination);o.start(t);o.stop(t+dur+0.03)}catch(e){}
 }
-function say(txt){if(!settings.voice)return;if(NAT){try{NAT.speak(txt)}catch(e){}return}try{if(!('speechSynthesis' in window))return;var u=new SpeechSynthesisUtterance(txt);u.lang='fr-FR';u.rate=1.05;window.speechSynthesis.cancel();window.speechSynthesis.speak(u)}catch(e){}}
+function say(txt,kind){if(!settings.voice||S.muted)return;if(inCall()){callQueue(txt,kind);return}if(NAT){try{NAT.speak(txt)}catch(e){}return}try{if(!('speechSynthesis' in window))return;var u=new SpeechSynthesisUtterance(txt);u.lang='fr-FR';u.rate=1.05;window.speechSynthesis.cancel();window.speechSynthesis.speak(u)}catch(e){}}
+function say2nav(t){say(t,'nav')}
+function inCall(){if(!NAT||!NAT.inCall)return false;try{return !!NAT.inCall()}catch(e){return false}}
+var CALLQ={list:[],timer:0};
+function callQueue(txt,kind){
+  if(kind!=='nav')CALLQ.list.push({txt:txt,t:Date.now()});
+  if(CALLQ.list.length>10)CALLQ.list.shift();
+  if(!CALLQ.timer)CALLQ.timer=setInterval(function(){
+    if(inCall())return;
+    clearInterval(CALLQ.timer);CALLQ.timer=0;
+    var parts=[],now=Date.now(),seen={};
+    if(NAV&&NAV.on&&!NAV.arrived){var nx=NAV.r.man[NAV.mi];if(nx){var dm=(nx.off-NAV.off)*1000;parts.push('Prochaine instruction : dans '+(dm>=1000?(Math.round(dm/100)/10).toString().replace('.',',')+' kilomètres':Math.max(50,Math.round(dm/50)*50)+' mètres')+', '+nx.txt)}}
+    var miss=[];CALLQ.list.filter(function(x){return now-x.t<180000}).slice(-2).forEach(function(x){if(!seen[x.txt]){seen[x.txt]=1;miss.push(x.txt)}});
+    if(miss.length)parts.push('Pendant l\'appel : '+miss.join('. '));
+    CALLQ.list=[];
+    if(parts.length&&S.mode!=='idle')say('Appel terminé. '+parts.join('. '));
+  },2000);
+}
+function setMute(on){S.muted=on;var b=$('dmMute');if(b){b.textContent=on?'🔇':'🔊';b.setAttribute('aria-pressed',String(on))}toast(on?'Annonces et bips coupés.':'Annonces et bips rétablis.')}
 function buzz(p){if(settings.vibrate&&NAT){try{NAT.vibrate(JSON.stringify([].concat(p)))}catch(e){}return}if(settings.vibrate&&navigator.vibrate){try{navigator.vibrate(p)}catch(e){}}}
 function requestWake(){if(NAT){try{NAT.keepScreen(true)}catch(e){}return}try{if(navigator.wakeLock){navigator.wakeLock.request('screen').then(function(w){S.wake=w}).catch(function(){})}}catch(e){}}
 function releaseWake(){if(NAT){try{NAT.keepScreen(false)}catch(e){}return}try{if(S.wake){S.wake.release();S.wake=null}}catch(e){}}
@@ -580,7 +600,7 @@ function stopTrip(discard){
     else{trips.unshift(summarize(tr));if(!wasDemo)saveTrips()}
   }
   LS.del('active');
-  S.mode='idle';S.zoneInfo={level:'none'};S.curLimitZone=false;NAV=null;navRender();dmShow(false);
+  S.mode='idle';S.zoneInfo={level:'none'};S.curLimitZone=false;NAV=null;navRender();dmShow(false);if(S.muted)setMute(false);
   setGps('idle');render();renderJournal();
 }
 
@@ -1410,15 +1430,18 @@ $('spGo').addEventListener('click',spGo);
 $('spTo').addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();$('spTo').blur();spGo()}});
 $('spCancel').addEventListener('click',function(){$('startPick').hidden=true});
 $('startPick').addEventListener('click',function(e){if(e.target.id==='startPick')$('startPick').hidden=true});
+$('dmMute').addEventListener('click',function(){setMute(!S.muted)});
 $('dmMode').addEventListener('click',function(){DM.north=!DM.north;LS.set('dmnorth',DM.north);$('dmMode').textContent=DM.north?'N':'⬆';dmSoon();toast(DM.north?'Carte orientée nord.':'Carte dans le sens de la marche.')});
 setTimeout(function(){$('dmMode').textContent=DM.north?'N':'⬆'},0);
 document.addEventListener('visibilitychange',dmSoon);
 $('btnDemo').addEventListener('click',function(){if(S.mode==='demo')stopTrip(false);else if(S.mode==='idle')startDemo()});
 $('mMinus').addEventListener('click',function(){settings.margin=Math.max(0,settings.margin-1);saveSettings();render()});
 $('mPlus').addEventListener('click',function(){settings.margin=Math.min(10,settings.margin+1);saveSettings();render()});
-[['optCams','cams'],['optSound','sound'],['optVoice','voice'],['optVibe','vibrate']].forEach(function(p){
+function applyAudio(){if(NAT&&NAT.audioPause){try{NAT.audioPause(!!settings.audioPause)}catch(e){}}}
+applyAudio();
+[['optCams','cams'],['optSound','sound'],['optVoice','voice'],['optVibe','vibrate'],['optPause','audioPause']].forEach(function(p){
   var el=$(p[0]);el.checked=!!settings[p[1]];
-  el.addEventListener('change',function(){settings[p[1]]=el.checked;saveSettings();if(p[1]==='cams')renderCamStatus()});
+  el.addEventListener('change',function(){settings[p[1]]=el.checked;saveSettings();if(p[1]==='cams')renderCamStatus();if(p[1]==='audioPause')applyAudio()});
 });
 $('btnAddZone').addEventListener('click',function(){
   var lat=num($('zLat').value),lon=num($('zLon').value);
@@ -2148,8 +2171,8 @@ function navTick(f){
   if(nx){
     var dm=(nx.off-NAV.off)*1000,sp=S.speed;
     var far=sp>90?2000:sp>50?800:300,near=sp>90?500:sp>50?200:80;
-    if(dm<=far&&dm>near*1.5&&!NAV.said[NAV.mi+'f']){NAV.said[NAV.mi+'f']=1;say('Dans '+(dm>=1000?(Math.round(dm/100)/10).toString().replace('.',',')+' kilomètres':Math.round(dm/50)*50+' mètres')+', '+nx.txt)}
-    else if(dm<=near&&!NAV.said[NAV.mi+'n']){NAV.said[NAV.mi+'f']=1;NAV.said[NAV.mi+'n']=1;say(nx.txt)}
+    if(dm<=far&&dm>near*1.5&&!NAV.said[NAV.mi+'f']){NAV.said[NAV.mi+'f']=1;say2nav('Dans '+(dm>=1000?(Math.round(dm/100)/10).toString().replace('.',',')+' kilomètres':Math.round(dm/50)*50+' mètres')+', '+nx.txt)}
+    else if(dm<=near&&!NAV.said[NAV.mi+'n']){NAV.said[NAV.mi+'f']=1;NAV.said[NAV.mi+'n']=1;say(nx.txt,'nav')}
   }
   incTick();
   navRender();
