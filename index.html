@@ -230,7 +230,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v22</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v23</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -1628,14 +1628,15 @@ function parseTrip(t){
   var pts=[],man=[];
   (t.legs||[]).forEach(function(l){
     pts=pts.concat(decodeP6(l.shape||''));
-    (l.maneuvers||[]).forEach(function(m){if(m.instruction)man.push({txt:m.instruction,len:m.length||0})});
+    (l.maneuvers||[]).forEach(function(m){if(m.instruction)man.push({txt:m.instruction,len:m.length||0,toll:!!m.toll})});
   });
-  return {time:t.summary.time,len:t.summary.length,toll:!!t.summary.has_toll,pts:pts,man:man};
+  var tk=0;man.forEach(function(m){if(m.toll)tk+=m.len});
+  return {time:t.summary.time,len:t.summary.length,toll:!!t.summary.has_toll,tollKm:tk,pts:pts,man:man};
 }
-function valhalla(a,b,cap,alts,noToll){
+function valhalla(a,b,cap,alts,tolls){
   var req={locations:[{lat:a.lat,lon:a.lon},{lat:b.lat,lon:b.lon}],costing:'auto',directions_options:{language:'fr-FR',units:'kilometers'}};
-  var co={};if(cap)co.top_speed=cap;if(noToll){co.use_tolls=0;co.use_highways=0.5}
-  if(cap||noToll)req.costing_options={auto:co};
+  var co={};if(cap)co.top_speed=cap;if(tolls!=null)co.use_tolls=tolls;
+  if(cap||tolls!=null)req.costing_options={auto:co};
   if(alts)req.alternates=alts;
   return fetchJson(VALHALLA+'?json='+encodeURIComponent(JSON.stringify(req)),30000).then(function(j){
     if(!j||!j.trip)throw new Error((j&&j.error)||'Aucun itinéraire trouvé.');
@@ -1664,20 +1665,25 @@ function rtCompute(){
   Promise.all([pa,geocode(to)]).then(function(ab){
     if(tok!==RT.tok)return;
     var a=ab[0],b=ab[1];
-    return Promise.all([valhalla(a,b,cap,2),valhalla(a,b,null,0).catch(function(){return null}),extra>0?valhalla(a,b,cap,1,true).catch(function(){return null}):Promise.resolve(null)]).then(function(r){
+    var soft=function(t){return extra>0?valhalla(a,b,cap,1,t).catch(function(){return null}):Promise.resolve(null)};
+    return Promise.all([valhalla(a,b,cap,2),valhalla(a,b,null,0).catch(function(){return null}),soft(0),soft(0.3),soft(0.6)]).then(function(r){
       if(tok!==RT.tok)return;
-      var rs=r[0].slice();
-      (r[2]||[]).forEach(function(x){if(!rs.some(function(y){return Math.abs(y.time-x.time)<30&&Math.abs(y.len-x.len)<0.5}))rs.push(x)});
+      var rs=[];
+      [r[0],r[2],r[3],r[4]].forEach(function(l){(l||[]).forEach(function(x){if(!rs.some(function(y){return Math.abs(y.time-x.time)<30&&Math.abs(y.len-x.len)<0.5}))rs.push(x)})});
       rs.sort(function(x,y){return x.time-y.time});
-      var fast=rs[0],rec=fast,note='';
-      if(extra>0&&fast.toll){
-        var free=rs.filter(function(x){return !x.toll}).sort(function(x,y){return x.time-y.time})[0];
-        if(free){var d=Math.round((free.time-fast.time)/60);
-          if(d*60<=extra*60){rec=free;note='Sans péage : +'+d+' min seulement, dans votre limite de '+extra+' min.'}
-          else note='Le trajet sans péage coûte +'+d+' min, au-delà de vos '+extra+' min : le plus rapide est conseillé.'}
-        else note='Aucun trajet entièrement sans péage trouvé.';
+      var fast=rs[0],rec=fast,note='',lim=fast.time+extra*60;
+      if(extra>0&&fast.tollKm>0.5){
+        var ok=rs.filter(function(x){return x.time<=lim}).sort(function(x,y){return x.tollKm-y.tollKm||x.time-y.time})[0];
+        var none=rs.filter(function(x){return x.tollKm<=0.5}).sort(function(x,y){return x.time-y.time})[0];
+        if(ok&&ok!==fast&&ok.tollKm<fast.tollKm-0.5){
+          rec=ok;var d=Math.round((ok.time-fast.time)/60);
+          note=(ok.tollKm<=0.5?'Sans péage':'Péage réduit de '+Math.round(fast.tollKm)+' à '+Math.round(ok.tollKm)+' km')+' pour +'+d+' min, dans votre limite de '+extra+' min.';
+          if(ok.tollKm>0.5&&none)note+=' Sans aucun péage : +'+Math.round((none.time-fast.time)/60)+' min.';
+        }else if(none)note='Aucun trajet moins cher dans vos '+extra+' min. Sans aucun péage : +'+Math.round((none.time-fast.time)/60)+' min.';
+        else note='Aucun trajet sans péage trouvé.';
       }
-      rs=[rec].concat(rs.filter(function(x){return x!==rec}));
+      var none2=rs.filter(function(x){return x.tollKm<=0.5}).sort(function(x,y){return x.time-y.time})[0];
+      rs=[rec].concat(rs.filter(function(x){return x!==rec&&(x.time<=lim||x===fast||x===none2)}));
       RT.a=a;RT.b=b;RT.cap=cap;RT.extra=extra;RT.note=note;RT.fast=fast;RT.routes=rs;RT.sel=0;RT.free=r[1]&&r[1][0]||null;
       rtShow();
     });
@@ -1693,8 +1699,8 @@ function rtShow(){
     var avg=r.time>0?Math.round(r.len/(r.time/3600)):0;
     var d=RT.free?Math.round((r.time-RT.free.time)/60):null;
     var cmp=d==null?'':d<=0?' · aussi rapide que sans plafond':' · +'+d+' min par rapport à sans plafond';
-    return '<button type="button" class="rt-opt" data-i="'+i+'" aria-pressed="'+(i===RT.sel)+'"><span class="t">'+fmtHM(r.time)+'</span>'+(i===0?'<span class="tag'+(r.toll?' toll':'')+'">'+(RT.extra>0&&r!==RT.fast?'Recommandé':'Meilleur')+'</span>':'<span></span>')+
-      '<span class="m">'+(Math.round(r.len*10)/10).toString().replace('.',',')+' km · '+avg+' km/h de moyenne · '+(r.toll?'avec péage':'sans péage')+cmp+'</span></button>';
+    return '<button type="button" class="rt-opt" data-i="'+i+'" aria-pressed="'+(i===RT.sel)+'"><span class="t">'+fmtHM(r.time)+'</span>'+(i===0?'<span class="tag'+(r.tollKm>0.5?' toll':'')+'">'+(RT.extra>0&&r!==RT.fast?'Recommandé':'Meilleur')+'</span>':'<span></span>')+
+      '<span class="m">'+(Math.round(r.len*10)/10).toString().replace('.',',')+' km · '+avg+' km/h de moyenne · '+(r.tollKm>0.5?'péage '+Math.round(r.tollKm)+' km':'sans péage')+cmp+'</span></button>';
   }).join('');
   rtSteps();rtDraw();
 }
