@@ -230,7 +230,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v26</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v27</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -358,6 +358,11 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
         <label>Temps ajouté accepté pour éviter les péages (min)<input type="number" id="rtExtra" inputmode="numeric" min="0" max="600" step="10" value="60"></label>
         <span class="hint" style="padding:0;border:0;font-size:12px">0 = ignorer les péages</span>
       </div>
+      <details id="rtEng">
+        <summary style="cursor:pointer;font-size:13px;color:var(--fg-dim)">Moteur de calcul : <b id="rtEngName">Valhalla</b></summary>
+        <label style="margin-top:8px">Clé TomTom (gratuite, developer.tomtom.com)<input type="text" id="rtKey" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Collez votre clé ici"></label>
+        <p style="margin:6px 0 0;font-size:12px;color:var(--fg-dim)">Avec une clé, les temps tiennent compte des vitesses réellement pratiquées. La clé reste sur ce téléphone.</p>
+      </details>
     </div>
     <div class="card rt-sum" id="rtSum" hidden></div>
     <div class="rt-opts" id="rtOpts"></div>
@@ -366,7 +371,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
       <summary style="padding:12px 16px;cursor:pointer;font-weight:600">Étapes</summary>
       <ol class="rt-steps" id="rtSteps"></ol>
     </details>
-    <p class="hint" style="padding:0">Calcul par Valhalla et adresses par Photon (données OpenStreetMap) : votre départ et votre arrivée sont envoyés à ces services publics. Les temps sont des estimations sans trafic. Kilomètres à péage lus sur OpenStreetMap ; le prix est estimé à 0,10 €/km (tarifs réels variables).</p>
+    <p class="hint" style="padding:0">Calcul par TomTom (si une clé est saisie) ou Valhalla, adresses par Photon (OpenStreetMap) : votre départ et votre arrivée sont envoyés à ces services publics. Les temps sont des estimations sans trafic. Kilomètres à péage lus sur OpenStreetMap ; le prix est estimé à 0,10 €/km (tarifs réels variables).</p>
   </section>
 </div>
 
@@ -1715,6 +1720,7 @@ function rtCompute(){
   Promise.all([pa,geocode(to)]).then(function(ab){
     if(!live())return;
     var a=ab[0],b=ab[1];
+    if(ttKey())return ttCompute(a,b,cap,extra,live).then(function(o){if(o&&live())rtFinish(o.base,o.list,o.beyond,o.note)});
     return Promise.all([valhalla(a,b,{cap:cap}),valhalla(a,b,{}).catch(function(){return null})]).then(function(r){
       if(!live())return;
       var fast=r[0][0];fast.kind='fast';
@@ -1781,6 +1787,98 @@ function rtAvoid(base,live){
     });
   });
 }
+/* ---------- moteur TomTom (si une clé est saisie) ---------- */
+var TT_URL='https://api.tomtom.com/routing/1/calculateRoute/';
+function ttKey(){var k=LS.get('ttkey','');return typeof k==='string'?k.trim():''}
+function ttParse(r){
+  var P=[],cum=[0],man=[];
+  (r.legs||[]).forEach(function(l){(l.points||[]).forEach(function(q){P.push([q.latitude,q.longitude])})});
+  for(var i=0;i+1<P.length;i++)cum.push(cum[i]+dist({lat:P[i][0],lon:P[i][1]},{lat:P[i+1][0],lon:P[i+1][1]})/1000);
+  var secs=[],tk=0;
+  (r.sections||[]).forEach(function(s){if(s.sectionType==='TOLL'&&cum[s.endPointIndex]!=null){secs.push({beg:s.startPointIndex,end:s.endPointIndex});tk+=cum[s.endPointIndex]-cum[s.startPointIndex]}});
+  var ins=(r.guidance&&r.guidance.instructions)||[];
+  ins.forEach(function(x,i){
+    if(!x.message||x.instructionType==='LOCATION_WAYPOINT')return;
+    var nx=ins[i+1];man.push({txt:x.message,len:nx?Math.max(0,(nx.routeOffsetInMeters-x.routeOffsetInMeters)/1000):0});
+  });
+  return {time:r.summary.travelTimeInSeconds,len:r.summary.lengthInMeters/1000,toll:tk>=1,tollKm:tk,secs:secs,pts:P,cum:cum,man:man};
+}
+/* pts : [[lat,lon]...] ; avoidLegs : tableau de booléens (péage évité sur ce tronçon) ; o : {cap, all:'tollRoads', guide} */
+function ttRoute(pts,avoidLegs,o){
+  o=o||{};
+  var url=TT_URL+pts.map(function(p){return p[0].toFixed(6)+','+p[1].toFixed(6)}).join(':')+'/json?key='+encodeURIComponent(ttKey())+
+    '&traffic=false&routeType=fastest&sectionType=toll'+(o.cap?'&vehicleMaxSpeed='+o.cap:'')+(o.all?'&avoid='+o.all:'')+(o.guide?'&instructionsType=text&language=fr-FR':'');
+  var ctl=window.AbortController?new AbortController():null,t=ctl?setTimeout(function(){ctl.abort()},30000):0;
+  var init={signal:ctl?ctl.signal:undefined};
+  if(avoidLegs&&avoidLegs.some(Boolean)){init.method='POST';init.headers={'Content-Type':'application/json'};
+    init.body=JSON.stringify({legs:avoidLegs.map(function(a){return a?{avoids:[{name:'tollRoads'}]}:{}})})}
+  return fetch(url,init).then(function(r){clearTimeout(t);
+    if(r.status===401||r.status===403)throw new Error('Clé TomTom refusée : vérifiez-la dans « Moteur de calcul ».');
+    if(r.status===429)throw new Error('Trop de demandes à TomTom, réessayez dans une minute.');
+    return r.json().then(function(j){if(!r.ok||!j.routes||!j.routes[0])throw new Error((j&&j.detailedError&&j.detailedError.message)||(j&&j.error&&j.error.description)||('HTTP '+r.status));return ttParse(j.routes[0])});
+  },function(e){clearTimeout(t);throw e});
+}
+function ttCompute(a,b,cap,extra,live){
+  var A=[a.lat,a.lon],B=[b.lat,b.lon];
+  return Promise.all([ttRoute([A,B],null,{cap:cap,guide:true}),ttRoute([A,B],null,{guide:false}).catch(function(){return null})]).then(function(r){
+    var fast=r[0];fast.kind='fast';
+    var base={a:a,b:b,cap:cap,extra:extra,free:r[1],fast:fast};
+    if(!live())return null;
+    if(!extra||fast.tollKm<1)return {base:base,list:[fast],beyond:[],note:''};
+    var budget=extra*60,P=fast.pts,cum=fast.cum,bnd=[];
+    var size=Math.max(40,fast.tollKm/8);
+    fast.secs.forEach(function(s){
+      var L=cum[s.end]-cum[s.beg],n=Math.max(1,Math.round(L/size));
+      for(var k=0;k<=n;k++){
+        var d=cum[s.beg]+L*k/n,bi=s.beg;
+        for(var i=s.beg;i<=s.end;i++)if(Math.abs(cum[i]-d)<Math.abs(cum[bi]-d))bi=i;
+        if(!bnd.length||cum[bi]-cum[bnd[bnd.length-1]]>5)bnd.push(bi);
+      }
+    });
+    if(bnd.length>13){var keep=[];for(var q=0;q<13;q++)keep.push(bnd[Math.round(q*(bnd.length-1)/12)]);bnd=keep}
+    function test(set,guide){
+      var pts=[A],av=[false];
+      set.forEach(function(iv){pts.push(P[iv[0]]);av.push(true);pts.push(P[iv[1]]);av.push(false)});
+      pts.push(B);
+      return ttRoute(pts,av,{cap:cap,guide:guide}).then(function(x){x.dt=x.time-fast.time;x.save=fast.tollKm-x.tollKm;x.set=set;return x});
+    }
+    var ivs=[];for(var i=0;i<bnd.length;i++)for(var j=i+1;j<bnd.length;j++)ivs.push([[bnd[i],bnd[j]]]);
+    var full=ttRoute([A,B],null,{cap:cap,all:'tollRoads',guide:true}).then(function(x){x.dt=x.time-fast.time;x.save=fast.tollKm-x.tollKm;x.set=[];return x}).catch(function(){return null});
+    rtSum('Recherche des portions de péage évitables… (0/'+ivs.length+')');
+    return Promise.all([full,rtPool(ivs.map(function(s){return function(){return live()?test(s,false):Promise.reject()}}),4,function(d,n){if(live())rtSum('Recherche des portions de péage évitables… ('+d+'/'+n+')')})]).then(function(rr){
+      if(!live())return null;
+      var single=rr[1].filter(function(x){return x&&x.save>=1&&x.dt>0});
+      var good=single.filter(function(x){return x.save>5}).sort(function(x,y){return y.save/Math.max(60,y.dt)-x.save/Math.max(60,x.dt)}).slice(0,12);
+      var pairs=[];
+      for(var i=0;i<good.length;i++)for(var j=i+1;j<good.length;j++){
+        var s=[good[i].set[0],good[j].set[0]].sort(function(x,y){return x[0]-y[0]});
+        if(s[0][1]<=s[1][0]&&good[i].dt+good[j].dt<=budget*1.1)pairs.push({set:s,save:good[i].save+good[j].save});
+      }
+      pairs.sort(function(x,y){return y.save-x.save});
+      var bestS=single.filter(function(x){return x.dt<=budget}).sort(function(x,y){return y.save-x.save})[0];
+      pairs=pairs.filter(function(p){return !bestS||p.save>bestS.save}).slice(0,4);
+      if(pairs.length)rtSum('Vérification des meilleures combinaisons…');
+      return rtPool(pairs.map(function(p){return function(){return live()?test(p.set,false):Promise.reject()}}),4).then(function(pr){
+        var all=single.concat(pr.filter(Boolean));if(rr[0])all.push(rr[0]);
+        var ok=all.filter(function(x){return x.dt<=budget&&x.save>=1}).sort(function(x,y){return y.save-x.save||x.dt-y.dt});
+        var rec=ok[0]||null,alt=null,note;
+        if(rec)alt=ok.filter(function(x){return x.dt<rec.dt-300&&x.save>=rec.save*0.5}).sort(function(x,y){return y.save/y.dt-x.save/x.dt})[0]||null;
+        var more=all.filter(function(x){return x.dt>budget&&x.save>(rec?rec.save:0)+10}).sort(function(x,y){return y.save/y.dt-x.save/x.dt})[0]||null;
+        if(rec)note='Péage évité : '+Math.round(rec.save)+' km (≈ '+fmtEur(rec.save)+') pour +'+Math.round(rec.dt/60)+' min.';
+        else note='Aucune portion de péage ne peut être évitée en moins de +'+extra+' min.';
+        if(more)note+=' Avec +'+Math.round(more.dt/60)+' min : '+Math.round(more.save)+' km évités (≈ '+fmtEur(more.save)+').';
+        /* les trajets affichés sont recalculés avec les instructions de guidage */
+        var show=[rec,alt,more].filter(Boolean);
+        return Promise.all(show.map(function(x){return x.set.length?test(x.set,true).catch(function(){return x}):Promise.resolve(x)})).then(function(g){
+          var list=[],beyond=[];
+          g.forEach(function(x,k){var src=show[k];x.kind=src===rec?'rec':src===alt?'alt':'beyond';(x.kind==='beyond'?beyond:list).push(x)});
+          if(list.length)list.splice(1,0,fast);else list.push(fast);
+          return {base:base,list:list,beyond:beyond,note:note};
+        });
+      });
+    });
+  });
+}
 function rtFinish(base,list,beyond,note){
   RT.a=base.a;RT.b=base.b;RT.cap=base.cap;RT.extra=base.extra;RT.free=base.free;RT.fast=base.fast;RT.note=note||'';
   RT.routes=list.concat(beyond);RT.sel=0;
@@ -1842,6 +1940,9 @@ function rtDraw(){
   ctx.fillStyle='rgba(255,255,255,.75)';ctx.fillRect(W-150,H-16,150,16);ctx.fillStyle='#222';ctx.font='10px sans-serif';ctx.textAlign='right';ctx.textBaseline='middle';ctx.fillText('© contributeurs OpenStreetMap',W-4,H-8);
 }
 $('rtGo').addEventListener('click',rtCompute);
+function rtEngUI(){var k=ttKey();$('rtEngName').textContent=k?'TomTom':'Valhalla (approximatif sur petites routes)';$('rtKey').value=k}
+$('rtKey').addEventListener('change',function(){var v=$('rtKey').value.replace(/\s+/g,'');LS.set('ttkey',v);rtEngUI();toast(v?'Clé TomTom enregistrée.':'Clé retirée : calcul par Valhalla.')});
+rtEngUI();
 ['rtFrom','rtTo','rtCap','rtExtra'].forEach(function(id){$(id).addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();$(id).blur();rtCompute()}})});
 $('rtHere').addEventListener('click',function(){$('rtFrom').value='Ma position';toast('Départ : votre position au moment du calcul.')});
 $('rtOpts').addEventListener('click',function(e){var b=e.target.closest('.rt-opt');if(!b)return;RT.sel=+b.dataset.i;Array.prototype.forEach.call($('rtOpts').children,function(x,i){x.setAttribute('aria-pressed',String(i===RT.sel))});rtSteps();rtDraw()});
