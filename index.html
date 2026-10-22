@@ -8,6 +8,8 @@
 <title>Vigie Route</title>
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}img{max-width:100%}[hidden]{display:none!important}</style>
 </head><body>
+<title>Vigie Route</title>
+<meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&display=swap">
@@ -78,7 +80,17 @@ button,input,summary{font-family:inherit}
 .sign{width:clamp(108px,35vw,134px);aspect-ratio:1/1;border-radius:50%;background:var(--sign-bg);border:clamp(9px,3vw,12px) solid var(--sign-ring);color:var(--sign-fg);display:grid;place-items:center;font:700 62px/1 var(--font-num);font-variant-numeric:tabular-nums;letter-spacing:0;white-space:nowrap}
 .sign-wrap>span{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--fg-dim)}
 #signRef{position:fixed;left:0;top:0;visibility:hidden;pointer-events:none;font:700 100px/1 var(--font-num);font-variant-numeric:tabular-nums;letter-spacing:0;white-space:nowrap}
-.sign[data-src="estimee"]{border-style:dashed}
+.sign[data-src="estimee"],.sign[data-src="incertaine"]{border-style:dashed}
+.sign[data-src="corrigee"]{box-shadow:0 0 0 3px var(--accent,#3b82f6)}
+.sign-wrap.tap{cursor:pointer}
+#limPick{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center}
+#limPick[hidden]{display:none}
+#limPick .box{background:var(--bg-card,#1b1f27);color:var(--fg,#fff);width:100%;max-width:520px;border-radius:18px 18px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom,0px))}
+#limPick h3{margin:0 0 4px;font-size:17px}
+#limPick p{margin:0 0 12px;font-size:13px;color:var(--fg-dim)}
+#limPick .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+#limPick button{font:700 20px var(--font-num);padding:14px 0;border-radius:12px;border:1px solid var(--border,#444);background:transparent;color:inherit}
+#limPick button.wide{grid-column:span 2;font:600 14px var(--font-ui,inherit)}
 .sign[data-src="inconnue"],.sign[data-src="auto"]{opacity:.55}
 .meter{position:relative;height:10px;background:var(--surface-2);border-radius:99px;margin-top:2px}
 .meter .fill{position:absolute;inset:0 auto 0 0;width:0;border-radius:99px;background:var(--ok);transition:width .35s ease,background-color .2s}
@@ -199,7 +211,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v16</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v17</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -207,7 +219,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
     <div class="card gauge" id="gauge" data-state="ok">
       <div class="gauge-main">
         <div class="speed"><b id="speedVal">0</b><small>km/h</small></div>
-        <div class="sign-wrap"><div class="sign" id="sign" data-src="auto"><span id="limitVal">–</span></div><span id="signCap">Auto</span></div>
+        <div class="sign-wrap tap" id="signWrap"><div class="sign" id="sign" data-src="auto"><span id="limitVal">–</span></div><span id="signCap">Auto</span></div>
       </div>
       <div>
         <div class="meter"><div class="fill" id="fill"></div><div class="tick" id="tick"></div></div>
@@ -318,6 +330,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
   </div>
 </nav>
 <div class="toast" id="toast" role="status" hidden></div>
+<div id="limPick" hidden><div class="box"><h3 id="lpTitle">Corriger la limite</h3><p id="lpSub">Valable pour cette route, mémorisée.</p><div class="grid" id="lpGrid"></div></div></div>
 <div id="mapFull" hidden>
   <canvas id="mfCanvas" aria-label="Carte agrandie"></canvas>
   <div id="mfTitle">Pincez pour zoomer · glissez pour déplacer</div>
@@ -360,7 +373,7 @@ function saveTrips(){
 
 /* ---------- état ---------- */
 var S={mode:'idle',watchId:null,trip:null,last:null,speed:0,heading:null,zoneState:{},zoneInfo:{level:'none'},demoZones:[],demo:null,demoTimer:null,simT:0,tick:null,ac:null,wake:null,curLimit:50,curLimitZone:false,lastBeepAt:0,lastActiveSave:0};
-var A={ways:[],cur:{lim:null,est:false,key:null,road:null},pendKey:undefined,pc:0,warned:false,cams:[]};
+var A={ways:[],lastW:null,cur:{lim:null,est:false,src:'inconnue',wid:null,key:null,road:null},pendKey:undefined,pc:0,warned:false,cams:[]};
 S.limSrc='inconnue';
 LS.del('cams');
 function now(){return S.mode==='demo'?S.simT:Date.now()}
@@ -414,7 +427,7 @@ function setGps(state,acc){
 function beginTrip(demo){
   S.mode=demo?'demo':'live';
   S.last=null;S.speed=0;S.heading=null;S.zoneState={};S.zoneInfo={level:'none'};S.curLimitZone=false;S.lastBeepAt=0;S.limSrc=demo?'demo':'inconnue';
-  A.ways=[];A.cams=[];A.pl=[];A.cur={lim:null,est:false,key:null,road:null};A.pendKey=undefined;A.pc=0;A.warned=false;T.key=null;T.planAt=0;T.retryAt=0;
+  A.ways=[];A.cams=[];A.pl=[];A.cur={lim:null,est:false,src:'inconnue',wid:null,key:null,road:null};A.lastW=null;A.pendKey=undefined;A.pc=0;A.warned=false;T.key=null;T.planAt=0;T.retryAt=0;
   var t0=now();
   S.trip={id:t0,start:t0,end:null,demo:demo,dist:0,movingMs:0,max:0,overMs:0,events:[],cur:null,lastOverT:0,pts:[],zs:{},lastT:t0};
   S.tick=setInterval(function(){if(S.mode==='live'){renderStats();checkLost();activeSaveMaybe()}},1000);
@@ -499,10 +512,11 @@ function onFix(f){
   var lim,src;
   if(zl){lim=zl.limit;src='zone'}
   else if(S.mode==='demo'){lim=80;src='demo'}
-  else if(al){lim=al.lim;src=al.est?'estimee':'carte'}
+  else if(al){lim=al.lim;src=al.src||(al.est?'estimee':'carte')}
   else{lim=null;src='inconnue'}
   S.curLimit=lim;S.curLimitZone=!!zl;S.limSrc=src;
-  var over=lim!=null&&Math.round(S.speed)>lim+settings.margin;
+  var extra=(src==='estimee'||src==='incertaine')?10:0;
+  var over=lim!=null&&Math.round(S.speed)>lim+settings.margin+extra;
   if(over&&prev)tr.overMs+=Math.min(dt,5)*1000;
   handleOver(f,lim,over);
 
@@ -518,7 +532,7 @@ function handleOver(f,lim,over){
   if(tr.cur&&f.t-tr.cur.t1>10000)closeCur(tr);
   if(over){
     var zn=(S.zoneInfo.z&&S.zoneInfo.d<=300)?S.zoneInfo.z.name:null;
-    var est=S.limSrc==='estimee';
+    var est=S.limSrc==='estimee'||S.limSrc==='incertaine';
     if(!tr.cur){tr.cur={t0:f.t,t1:f.t,max:S.speed,limit:lim,est:est,sum:S.speed,n:1,lat:f.lat,lon:f.lon,zone:zn,spoken:false}}
     else{var c=tr.cur;c.t1=f.t;c.sum+=S.speed;c.n++;if(S.speed>c.max){c.max=S.speed;c.limit=lim;c.est=est;c.lat=f.lat;c.lon=f.lon;c.zone=zn||c.zone}}
     tr.lastOverT=f.t;
@@ -592,14 +606,31 @@ function parseMax(v){
   var m=v.match(/^(\d{2,3})\s*mph$/);if(m)return Math.round(m[1]*1.609);
   return ({'fr:urban':50,'fr:rural':80,'fr:motorway':130})[v]||null;
 }
+var OVR=LS.get('ovr',{});if(!OVR||typeof OVR!=='object')OVR={};
+function wayTouch(w,u){
+  var g=w.g,h=u.g,n=g.length,m=h.length;
+  var ends=[[g[0],g[1]],[g[n-2],g[n-1]]],ends2=[[h[0],h[1]],[h[m-2],h[m-1]]];
+  for(var i=0;i<2;i++)for(var j=0;j<2;j++)if(ends[i][0]===ends2[j][0]&&ends[i][1]===ends2[j][1])return true;
+  return false;
+}
+function wayLim(w,fwd){
+  var tg=w.tags;
+  if(OVR[w.id]!=null)return {lim:OVR[w.id],src:'corrigee'};
+  var v=fwd?(tg['maxspeed:forward']||tg.maxspeed):(tg['maxspeed:backward']||tg.maxspeed);
+  var lim=parseMax(v);
+  if(lim==null)lim=parseMax(tg['maxspeed:type'])||parseMax(tg['source:maxspeed']);
+  if(lim!=null)return {lim:lim,src:'carte'};
+  lim=estimateLimit(tg);
+  return {lim:lim,src:lim!=null?'estimee':'inconnue'};
+}
 function matchWay(f){
   if(!A.ways.length)return null;
-  var kx=111320*Math.cos(f.lat*rad),ky=111320,known=S.heading!=null&&S.speed>8,best=null,maxD=Math.max(25,(f.acc||0)*1.2+10);
-  var mLat=maxD/ky+1e-5,mLon=maxD/kx+1e-5;
+  var kx=111320*Math.cos(f.lat*rad),ky=111320,known=S.heading!=null&&S.speed>8,maxD=Math.max(25,(f.acc||0)*1.2+10);
+  var mLat=maxD/ky+1e-5,mLon=maxD/kx+1e-5,cand=[];
   for(var wi=0;wi<A.ways.length;wi++){
     var w=A.ways[wi],bb=w.bb;
     if(f.lat<bb[0]-mLat||f.lat>bb[1]+mLat||f.lon<bb[2]-mLon||f.lon>bb[3]+mLon)continue;
-    var g=w.g;
+    var g=w.g,wb=null;
     for(var i=2;i<g.length;i+=2){
       var ax=(g[i-1]-f.lon)*kx,ay=(g[i-2]-f.lat)*ky,bx=(g[i+1]-f.lon)*kx,by=(g[i]-f.lat)*ky;
       var dx=bx-ax,dy=by-ay,l2=dx*dx+dy*dy,t=l2?clamp(-(ax*dx+ay*dy)/l2,0,1):0;
@@ -612,15 +643,31 @@ function matchWay(f){
         var ow=w.tags.oneway;
         if((ow==='yes'&&!fwd)||(ow==='-1'&&fwd))score+=200;
       }
-      if(!best||score<best.score)best={score:score,w:w,fwd:fwd};
+      if(!wb||score<wb.score)wb={score:score,w:w,fwd:fwd};
+    }
+    if(wb){
+      /* continuité : on préfère la route déjà suivie, puis celles qui s'y raccordent */
+      if(A.lastW){
+        if(w===A.lastW||w.id===A.lastW.id)wb.score-=15;
+        else if(wayTouch(w,A.lastW))wb.score-=7;
+      }
+      cand.push(wb);
     }
   }
-  if(!best)return null;
-  var tg=best.w.tags,v=best.fwd?(tg['maxspeed:forward']||tg.maxspeed):(tg['maxspeed:backward']||tg.maxspeed);
-  var lim=parseMax(v),est=false;
-  if(lim==null)lim=parseMax(tg['maxspeed:type'])||parseMax(tg['source:maxspeed']);
-  if(lim==null){lim=estimateLimit(tg);est=lim!=null}
-  return {lim:lim,est:est,road:tg.ref||tg.name||null};
+  if(!cand.length)return null;
+  cand.sort(function(x,y){return x.score-y.score});
+  var best=cand[0],r=wayLim(best.w,best.fwd),tg=best.w.tags,amb=false;
+  A.lastW=best.w;
+  /* incertain : une autre route proche, d'une limite différente, presque aussi plausible */
+  if(r.src!=='corrigee'){
+    for(var k=1;k<cand.length&&k<6;k++){
+      if(cand[k].score-best.score>10)break;
+      var r2=wayLim(cand[k].w,cand[k].fwd);
+      if(r2.lim!==r.lim){amb=true;break}
+    }
+  }
+  var src=r.src==='inconnue'?'inconnue':(amb&&r.src!=='corrigee'?'incertaine':r.src);
+  return {lim:r.lim,est:src==='estimee',src:src,wid:best.w.id,road:tg.ref||tg.name||null,name:tg.name||tg.ref||null};
 }
 function estimateLimit(tg){
   var urban=tg.lit==='yes'||(tg.sidewalk&&tg.sidewalk!=='no')||tg.junction==='roundabout';
@@ -795,13 +842,13 @@ function renderCamStatus(){
 }
 function autoLimit(f){
   if(S.mode!=='live')return null;
-  var m=matchWay(f),key=m&&m.lim!=null?m.lim+(m.est?'e':'c'):null;
-  function adopt(){A.cur={lim:m&&m.lim!=null?m.lim:null,est:!!(m&&m.est),key:key,road:m?m.road:null};A.pendKey=undefined;A.pc=0}
+  var m=matchWay(f),key=m&&m.lim!=null?m.lim+m.src:null;
+  function adopt(){A.cur={lim:m&&m.lim!=null?m.lim:null,est:!!(m&&m.est),src:m&&m.lim!=null?m.src:'inconnue',wid:m?m.wid:null,key:key,road:m?m.road:null};A.pendKey=undefined;A.pc=0}
   if(A.cur.key===null)adopt();
-  else if(key===A.cur.key){A.pendKey=undefined;A.pc=0;if(m)A.cur.road=m.road}
+  else if(key===A.cur.key){A.pendKey=undefined;A.pc=0;if(m){A.cur.road=m.road;A.cur.wid=m.wid}}
   else if(key===A.pendKey){if(++A.pc>=2)adopt()}
   else{A.pendKey=key;A.pc=1}
-  return A.cur.key===null?null:{lim:A.cur.lim,est:A.cur.est};
+  return A.cur.key===null?null:{lim:A.cur.lim,est:A.cur.est,src:A.cur.src};
 }
 
 /* ---------- panneau : un nombre à 3 chiffres occupe 80 % du disque blanc ---------- */
@@ -822,7 +869,7 @@ function renderGauge(){
   $('speedVal').textContent=sp;
   $('limitVal').textContent=lim==null?'–':lim;
   $('sign').dataset.src=src;
-  $('signCap').textContent=({auto:'Auto',zone:'Zone',carte:'Carte',estimee:'Estimée',inconnue:'Inconnue',demo:'Limite'})[src]||'Limite';
+  $('signCap').textContent=({auto:'Auto',zone:'Zone',carte:'Carte',estimee:'Estimée',incertaine:'Incertaine',corrigee:'Corrigée',inconnue:'Inconnue',demo:'Limite'})[src]||'Limite';
   var scaleMax=Math.max(Math.ceil((lim==null?60:lim)*1.5/10)*10,Math.ceil(S.speed/10)*10+10);
   $('scaleMax').textContent=scaleMax;
   $('fill').style.width=clamp(S.speed/scaleMax*100,0,100)+'%';
@@ -836,7 +883,7 @@ function renderGauge(){
     var dur=tr&&tr.cur?Math.round((now()-tr.cur.t0)/1000):0;
     txt='Au-dessus de la limite de '+(sp-lim)+' km/h'+(dur>=2?' depuis '+dur+' s':'');
   }else if(state==='warn')txt='Dans la marge de '+m+' km/h';
-  else txt=(S.speed<1?'À l\'arrêt':'Sous la limite de '+Math.max(0,Math.round(lim-S.speed))+' km/h')+((S.limSrc==='carte'||S.limSrc==='estimee')&&A.cur.road?' · '+A.cur.road:'')+(S.limSrc==='estimee'?' · limite estimée':'');
+  else txt=(S.speed<1?'À l\'arrêt':'Sous la limite de '+Math.max(0,Math.round(lim-S.speed))+' km/h')+((S.limSrc==='carte'||S.limSrc==='estimee'||S.limSrc==='incertaine'||S.limSrc==='corrigee')&&A.cur.road?' · '+A.cur.road:'')+(S.limSrc==='estimee'?' · limite estimée':'')+(S.limSrc==='incertaine'?' · route incertaine':'')+(S.limSrc==='corrigee'?' · limite corrigée':'');
   $('statusLine').textContent=txt;
   $('mVal').textContent=m;
   var bs=$('btnStart'),bd=$('btnDemo');
@@ -1415,9 +1462,39 @@ window.addEventListener('resize',function(){
 try{document.fonts.ready.then(fitSign);document.fonts.addEventListener('loadingdone',fitSign)}catch(e){}
 try{window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',renderTrace)}catch(e){}
 
+/* ---------- correction manuelle de la limite d'une route ---------- */
+(function(){
+  var lp=$('limPick'),grid=$('lpGrid'),wid=null;
+  [20,30,50,70,80,90,110,130].forEach(function(v){var b=document.createElement('button');b.type='button';b.textContent=v;b.dataset.v=v;grid.appendChild(b)});
+  var rm=document.createElement('button');rm.type='button';rm.className='wide';rm.textContent='Retirer ma correction';rm.dataset.v='x';grid.appendChild(rm);
+  var cn=document.createElement('button');cn.type='button';cn.className='wide';cn.textContent='Annuler';cn.dataset.v='c';grid.appendChild(cn);
+  function close(){lp.hidden=true;wid=null}
+  $('signWrap').addEventListener('click',function(){
+    if(S.mode!=='live'||A.cur.wid==null){toast('Touchez le panneau pendant un trajet, sur une route reconnue, pour corriger sa limite.');return}
+    wid=A.cur.wid;
+    $('lpTitle').textContent='Corriger la limite'+(A.cur.road?' · '+A.cur.road:'');
+    $('lpSub').textContent='Limite lue : '+(A.cur.lim!=null?A.cur.lim:'inconnue')+' ('+({carte:'carte',estimee:'estimée',incertaine:'incertaine',corrigee:'corrigée'}[A.cur.src]||'?')+'). Votre choix sera mémorisé pour cette route.';
+    rm.hidden=OVR[wid]==null;
+    lp.hidden=false;
+  });
+  lp.addEventListener('click',function(e){
+    if(e.target===lp){close();return}
+    var b=e.target.closest('button');if(!b)return;
+    var v=b.dataset.v;
+    if(v==='c'){close();return}
+    if(wid!=null){
+      if(v==='x')delete OVR[wid];else OVR[wid]=+v;
+      LS.set('ovr',OVR);
+      A.cur.key=null;A.pendKey=undefined;A.pc=0;
+      toast(v==='x'?'Correction retirée.':'Limite '+v+' mémorisée pour cette route.');
+    }
+    close();
+  });
+})();
+
 render();renderZones();renderJournal();renderOffline();fitSign();
 
-if(typeof window!=='undefined'&&window.__VIGIE_TEST__){window.__VIGIE_TEST__({T:T,pump:pump,tileTick:tileTick,rebuildActive:rebuildActive,enqueue:enqueue,planPrefetch:planPrefetch,S:S,startDemo:startDemo,demoTick:demoTick,trips:function(){return trips},parseZones:parseZones,csvText:csvText,A:A,matchWay:matchWay,parseMax:parseMax,overpass:overpass,startLive:startLive,stopTrip:stopTrip,storeTile:storeTile,drawTripMap:drawTripMap,BASEC:BASEC})}
+if(typeof window!=='undefined'&&window.__VIGIE_TEST__){window.__VIGIE_TEST__({T:T,pump:pump,tileTick:tileTick,rebuildActive:rebuildActive,enqueue:enqueue,planPrefetch:planPrefetch,S:S,startDemo:startDemo,demoTick:demoTick,trips:function(){return trips},parseZones:parseZones,csvText:csvText,A:A,matchWay:matchWay,OVR:OVR,parseMax:parseMax,overpass:overpass,startLive:startLive,stopTrip:stopTrip,storeTile:storeTile,drawTripMap:drawTripMap,BASEC:BASEC})}
 })();
 </script>
 
