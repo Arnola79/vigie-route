@@ -250,7 +250,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v35</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v36</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -664,10 +664,10 @@ function handleOver(f,lim,over){
   var tr=S.trip;
   if(tr.cur&&f.t-tr.cur.t1>10000)closeCur(tr);
   if(over){
-    var zn=(S.zoneInfo.z&&S.zoneInfo.d<=300)?S.zoneInfo.z.name:null;
+    var zn=(S.zoneInfo.z&&S.zoneInfo.d<=300)?S.zoneInfo.z.name:null;var rd=A.cur.road||null;
     var est=S.limSrc==='estimee'||S.limSrc==='incertaine';
-    if(!tr.cur){tr.cur={t0:f.t,t1:f.t,max:S.speed,limit:lim,est:est,sum:S.speed,n:1,lat:f.lat,lon:f.lon,zone:zn,spoken:false}}
-    else{var c=tr.cur;c.t1=f.t;c.sum+=S.speed;c.n++;if(S.speed>c.max){c.max=S.speed;c.limit=lim;c.est=est;c.lat=f.lat;c.lon=f.lon;c.zone=zn||c.zone}}
+    if(!tr.cur){tr.cur={road:rd,src:S.limSrc,t0:f.t,t1:f.t,max:S.speed,limit:lim,est:est,sum:S.speed,n:1,lat:f.lat,lon:f.lon,zone:zn,spoken:false}}
+    else{var c=tr.cur;c.t1=f.t;c.sum+=S.speed;c.n++;if(S.speed>c.max){c.max=S.speed;c.limit=lim;c.est=est;c.src=S.limSrc;c.lat=f.lat;c.lon=f.lon;c.zone=zn||c.zone}}
     tr.lastOverT=f.t;
     if(confirmed(tr)){
       if(!tr.cur.spoken){tr.cur.spoken=true;say('Vitesse excessive, limite '+(S.limSrc==='incertaine'?'incertaine ':(est?'estimée ':''))+lim);buzz([300,120,300]);overBeep(est,0.3);S.lastBeepAt=f.t}
@@ -678,7 +678,7 @@ function handleOver(f,lim,over){
 function closeCur(tr){
   var c=tr.cur;if(!c)return;
   if(c.t1-c.t0>=MIN_OVER_MS){
-    tr.events.push({t0:c.t0,dur:Math.round((c.t1-c.t0)/1000)+1,max:Math.round(c.max),limit:c.limit,est:!!c.est,avg:Math.round(c.sum/c.n),lat:c.lat,lon:c.lon,zone:c.zone||null});
+    tr.events.push({t0:c.t0,dur:Math.round((c.t1-c.t0)/1000)+1,max:Math.round(c.max),limit:c.limit,est:!!c.est,avg:Math.round(c.sum/c.n),lat:c.lat,lon:c.lon,zone:c.zone||null,src:c.src||null,road:c.road||null});
     if(!tr.demo){LS.set('active',summarize(tr))}
   }
   tr.cur=null;
@@ -1132,7 +1132,7 @@ function renderJournal(){
   box.innerHTML=trips.map(function(t,ti){
     var n=t.events.length,dur=(t.end||t.start)-t.start;
     var evs=n?'<ul class="ev">'+t.events.map(function(e){
-      return '<li><span>'+(n>0?'<b class="evn">'+(t.events.indexOf(e)+1)+'</b> ':'')+fmtTime(e.t0)+'</span><span><b>+'+(e.max-e.limit)+' km/h</b> · '+e.max+' pour '+e.limit+(e.est?' (estimée)':'')+' · '+e.dur+' s</span>'+(e.zone?'<span class="z">'+esc(e.zone)+'</span>':'')+'</li>';
+      return '<li><span>'+(n>0?'<b class="evn">'+(t.events.indexOf(e)+1)+'</b> ':'')+fmtTime(e.t0)+'</span><span><b>+'+(e.max-e.limit)+' km/h</b> · '+e.max+' pour '+e.limit+(e.src?' ('+({tomtom:'TomTom',itin:'TomTom',carte:'carte OSM',estimee:'estimée OSM',incertaine:'incertaine',corrigee:'corrigée',zone:'zone'})[e.src]+')':(e.est?' (estimée)':''))+(e.road?' · '+esc(e.road):'')+' · '+e.dur+' s</span>'+(e.zone?'<span class="z">'+esc(e.zone)+'</span>':'')+'</li>';
     }).join('')+'</ul>':'<ul class="ev"><li><span>Aucun dépassement sur ce trajet.</span></li></ul>';
     return '<details class="trip"><summary><div class="t1"><span>'+fmtDate(t.start)+' · '+fmtTime(t.start).slice(0,5)+'</span><span>'+(t.demo?'<span class="badge demo">Démo</span> ':'')+'<span class="badge'+(n?' bad':'')+'">'+n+' dépassement'+(n>1?'s':'')+'</span></span></div><div class="t2"><span>'+fmtDist(t.dist)+'</span><span>'+fmtDur(dur)+'</span><span>max '+t.max+' km/h</span><span>'+fmtDur(t.overMs||0)+' en excès</span></div></summary>'+mapBox(t,ti)+evs+'</details>';
   }).join('');
@@ -1641,7 +1641,7 @@ function renderOvr(){
     if(S.mode!=='live'||A.cur.wid==null){toast('Touchez le panneau pendant un trajet, sur une route reconnue, pour corriger sa limite.');return}
     wid=A.cur.wid;
     $('lpTitle').textContent='Corriger la limite'+(A.cur.road?' · '+A.cur.road:'');
-    $('lpSub').textContent='Limite lue : '+(A.cur.lim!=null?A.cur.lim:'inconnue')+' ('+({carte:'carte',estimee:'estimée',incertaine:'incertaine',corrigee:'corrigée'}[A.cur.src]||'?')+'). Votre choix sera mémorisé pour cette route.';
+    $('lpSub').textContent='Limite lue : '+(A.cur.lim!=null?A.cur.lim:'inconnue')+' ('+({carte:'carte',estimee:'estimée',incertaine:'incertaine',corrigee:'corrigée',tomtom:'TomTom'}[A.cur.src]||'?')+'). Votre choix sera mémorisé pour cette route.';
     rm.hidden=OVR[wid]==null;
     lp.hidden=false;
   });
@@ -2092,8 +2092,10 @@ function ttLimit(f){
       else if(!TL.last||dist(TL.last,f)>600){TL.lim=null;TL.road=road;TL.same=0}
     }).catch(function(){}).then(function(){TL.busy=false;tlUI()});
   }
+  var ok=TL.road?'tt:'+TL.road+'@'+(Math.round(f.lat*20)/20).toFixed(2)+','+(Math.round(f.lon*20)/20).toFixed(2):null;
+  A.cur.road=TL.road;A.cur.wid=ok;A.cur.lim=TL.lim;A.cur.src='tomtom';
+  if(ok&&OVR[ok]!=null){A.cur.lim=OVR[ok];A.cur.src='corrigee';return {lim:OVR[ok],src:'corrigee'}}
   if(TL.lim==null)return null;
-  A.cur.road=TL.road;
   return {lim:TL.lim,src:'tomtom'};
 }
 /* ---------- incidents TomTom en temps réel (quota gratuit : 2 500 / mois) ---------- */
