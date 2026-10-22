@@ -250,7 +250,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v36</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v37</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -552,7 +552,7 @@ function setGps(state,acc){
 
 /* ---------- trajet ---------- */
 function beginTrip(demo){
-  TL={lim:null,road:null,at:0,pos:null,hd:null,busy:false,same:0,last:null};
+  TL={lim:null,road:null,at:0,pos:null,hd:null,busy:false,same:0,last:null,pend:null};
   setTimeout(function(){dmShow(true)},0);
   S.mode=demo?'demo':'live';
   S.last=null;S.speed=0;S.heading=null;S.zoneState={};S.zoneInfo={level:'none'};S.curLimitZone=false;S.lastBeepAt=0;S.limSrc=demo?'demo':'inconnue';
@@ -2070,7 +2070,7 @@ function startChooser(){
   $('startPick').hidden=false;
 }
 /* ---------- limites TomTom en trajet libre (géocodage inverse, quota 20 000 / mois) ---------- */
-var TL={lim:null,road:null,at:0,pos:null,hd:null,busy:false,same:0,last:null};
+var TL={lim:null,road:null,at:0,pos:null,hd:null,busy:false,same:0,last:null,pend:null};
 var TL_MAX=18000;
 function ttOnly(){return !!ttKey()&&settings.ttlim!==false}
 function tlCount(){var m=new Date().toISOString().slice(0,7),c=LS.get('ttrev',null);if(!c||c.m!==m)c={m:m,n:0};return c}
@@ -2078,18 +2078,24 @@ function tlUI(){var el=$('tlInfo');if(el){var c=tlCount();el.textContent=ttKey()
 function ttLimit(f){
   var now=Date.now(),sp=S.speed,c=tlCount();
   if(c.n>=TL_MAX)return null;
-  var moved=TL.pos?dist(TL.pos,f):1e9,thr=Math.max(150,sp*5)*(TL.same>=2?2:1);
+  var moved=TL.pos?dist(TL.pos,f):1e9,thr=TL.pend?40:Math.max(150,sp*5)*(TL.same>=2?2:1);
   var turned=TL.hd!=null&&S.heading!=null&&angDiff(TL.hd,S.heading)>35&&moved>40;
   var need=!TL.pos||moved>thr||turned||(TL.lim==null&&now-TL.at>15000&&moved>20);
-  if(need&&!TL.busy&&now-TL.at>=4000&&navigator.onLine!==false&&(sp>3||TL.lim==null)){
+  if(need&&!TL.busy&&now-TL.at>=(TL.pend?2500:4000)&&navigator.onLine!==false&&(sp>3||TL.lim==null)){
     TL.busy=true;TL.at=now;TL.pos={lat:f.lat,lon:f.lon};TL.hd=S.heading;c.n++;LS.set('ttrev',c);
     var url='https://api.tomtom.com/search/2/reverseGeocode/'+f.lat.toFixed(6)+','+f.lon.toFixed(6)+'.json?key='+encodeURIComponent(ttKey())+
       '&returnSpeedLimit=true&radius=40&language=fr-FR'+(S.heading!=null&&sp>8?'&heading='+Math.round(S.heading):'');
     fetchJson(url,8000).then(function(j){
       var a=j&&j.addresses&&j.addresses[0],ad=a&&a.address||{},m=/^([\d.]+)\s*(KPH|MPH)/.exec(ad.speedLimit||'');
       var lim=m?Math.round(+m[1]*(m[2]==='MPH'?1.609:1)):null,road=ad.streetName||ad.street||null;
-      if(lim!=null){TL.same=(lim===TL.lim&&road===TL.road)?TL.same+1:0;TL.lim=lim;TL.road=road;TL.last={lat:f.lat,lon:f.lon}}
-      else if(!TL.last||dist(TL.last,f)>600){TL.lim=null;TL.road=road;TL.same=0}
+      /* un changement de limite n'est adopté que s'il est confirmé par une 2e lecture un peu plus loin
+         (évite de prendre la limite d'une ruelle voisine à un carrefour ou si le GPS dérive) */
+      if(lim!=null){
+        if(TL.lim==null||(lim===TL.lim&&road===TL.road)){TL.same=TL.lim===lim?TL.same+1:0;TL.lim=lim;TL.road=road;TL.pend=null;TL.last={lat:f.lat,lon:f.lon}}
+        else if(TL.pend&&TL.pend.lim===lim&&TL.pend.road===road){TL.lim=lim;TL.road=road;TL.same=0;TL.pend=null;TL.last={lat:f.lat,lon:f.lon}}
+        else{TL.pend={lim:lim,road:road};TL.last={lat:f.lat,lon:f.lon}}
+      }
+      else if(!TL.last||dist(TL.last,f)>600){TL.lim=null;TL.road=road;TL.same=0;TL.pend=null}
     }).catch(function(){}).then(function(){TL.busy=false;tlUI()});
   }
   var ok=TL.road?'tt:'+TL.road+'@'+(Math.round(f.lat*20)/20).toFixed(2)+','+(Math.round(f.lon*20)/20).toFixed(2):null;
