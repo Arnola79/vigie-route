@@ -250,7 +250,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v30</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v31</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -430,7 +430,10 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
   <h3>Démarrer</h3>
   <button class="btn primary" type="button" id="spFree">Trajet libre<br><small style="font-weight:500">Limites et zones de danger, sans itinéraire</small></button>
   <button class="btn primary" type="button" id="spRoute" hidden></button>
-  <button class="btn" type="button" id="spCalc">Calculer un itinéraire</button>
+  <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px">
+    <input type="text" id="spTo" placeholder="Aller vers… (ville, adresse)" autocomplete="off" enterkeyhint="go">
+    <button class="btn" type="button" id="spGo" style="width:auto;min-height:46px;height:46px">Calculer</button>
+  </div>
   <button class="btn" type="button" id="spCancel">Annuler</button>
 </div></div>
 <div id="limPick" hidden><div class="box"><h3 id="lpTitle">Corriger la limite</h3><p id="lpSub">Valable pour cette route, mémorisée.</p><div class="grid" id="lpGrid"></div></div></div>
@@ -1402,7 +1405,9 @@ document.querySelector('.tabs').addEventListener('click',function(e){var b=e.tar
 $('btnStart').addEventListener('click',function(){if(S.mode==='live')stopTrip(false);else if(S.mode==='idle')startChooser()});
 $('spFree').addEventListener('click',function(){$('startPick').hidden=true;NAV=null;navRender();startLive()});
 $('spRoute').addEventListener('click',function(){$('startPick').hidden=true;var r=RT.routes[RT.sel];if(r)navStart(r)});
-$('spCalc').addEventListener('click',function(){$('startPick').hidden=true;showTab('route');setTimeout(function(){$('rtTo').focus()},100)});
+function spGo(){var d=$('spTo').value.trim();if(!d){$('spTo').focus();return}$('startPick').hidden=true;$('rtFrom').value='';$('rtTo').value=d;$('spTo').value='';showTab('route');rtCompute()}
+$('spGo').addEventListener('click',spGo);
+$('spTo').addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();$('spTo').blur();spGo()}});
 $('spCancel').addEventListener('click',function(){$('startPick').hidden=true});
 $('startPick').addEventListener('click',function(e){if(e.target.id==='startPick')$('startPick').hidden=true});
 $('dmMode').addEventListener('click',function(){DM.north=!DM.north;LS.set('dmnorth',DM.north);$('dmMode').textContent=DM.north?'N':'⬆';dmSoon();toast(DM.north?'Carte orientée nord.':'Carte dans le sens de la marche.')});
@@ -1635,7 +1640,7 @@ var VALHALLA='https://valhalla1.openstreetmap.de/route';
 var PHOTON='https://photon.komoot.io/api/';
 var NOMINATIM='https://nominatim.openstreetmap.org/search';
 var RT={routes:[],sel:0,a:null,b:null,cap:110,free:null,tok:0,tiles:{}};
-(function(){var q=LS.get('rtq',null);if(q&&typeof q==='object'){$('rtFrom').value=String(q.from||'').slice(0,120);$('rtTo').value=String(q.to||'').slice(0,120);var c=Math.round(num(q.cap));if(c>=60&&c<=130)$('rtCap').value=c;var x=Math.round(num(q.extra));if(x>=0&&x<=600)$('rtExtra').value=x}})();
+(function(){var q=LS.get('rtq',null);if(q&&typeof q==='object'){$('rtTo').value=String(q.to||'').slice(0,120);var c=Math.round(num(q.cap));if(c>=60&&c<=130)$('rtCap').value=c;var x=Math.round(num(q.extra));if(x>=0&&x<=600)$('rtExtra').value=x}})();
 
 function decodeP6(str){
   var pts=[],i=0,lat=0,lon=0,n=str.length,b,sh,r;
@@ -1658,12 +1663,27 @@ function parseLL(s){
   return okZone(la,lo)?{lat:la,lon:lo,name:la.toFixed(4)+', '+lo.toFixed(4)}:null;
 }
 function herePos(){
-  var p=S.last||nativePos();
-  if(p)return Promise.resolve({lat:p.lat,lon:p.lon,name:'Ma position'});
+  var me=function(lat,lon,approx){return {lat:lat,lon:lon,name:approx?'Ma position (approximative)':'Ma position'}};
+  if(S.last&&S.mode==='live'&&Date.now()-S.last.t<30000)return Promise.resolve(me(S.last.lat,S.last.lon));
+  if(NAT){
+    return new Promise(function(res,rej){
+      var pf=window.__nativeFix,pe=window.__nativeGpsError,done=false,started=S.mode!=='live';
+      function end(v,err){
+        if(done)return;done=true;clearTimeout(to);
+        window.__nativeFix=pf;window.__nativeGpsError=pe;
+        if(started&&S.mode!=='live'){try{NAT.stopGps()}catch(e){}}
+        if(err)rej(err);else res(v);
+      }
+      var to=setTimeout(function(){var p=nativePos();if(p)end(me(p.lat,p.lon,true));else end(null,new Error('Position introuvable : vérifiez que la localisation est activée, ou saisissez un départ.'))},20000);
+      window.__nativeFix=function(lat,lon,acc){if(pf)try{pf.apply(null,arguments)}catch(e){};if(!acc||acc<150)end(me(lat,lon))};
+      window.__nativeGpsError=function(code){if(pe)try{pe(code)}catch(e){};if(code===1)end(null,new Error('Autorisez la localisation pour Vigie dans les réglages Android.'))};
+      if(started){try{NAT.startGps()}catch(e){end(null,new Error('Position indisponible.'))}}
+    });
+  }
   return new Promise(function(res,rej){
     if(!navigator.geolocation){rej(new Error('Position indisponible : saisissez un départ.'));return}
-    navigator.geolocation.getCurrentPosition(function(g){res({lat:g.coords.latitude,lon:g.coords.longitude,name:'Ma position'})},
-      function(){rej(new Error('Position indisponible : saisissez un départ.'))},{enableHighAccuracy:false,timeout:10000,maximumAge:120000});
+    navigator.geolocation.getCurrentPosition(function(g){res(me(g.coords.latitude,g.coords.longitude))},
+      function(){rej(new Error('Position indisponible : saisissez un départ.'))},{enableHighAccuracy:true,timeout:20000,maximumAge:30000});
   });
 }
 function geocode(q){
@@ -1770,7 +1790,7 @@ function rtCompute(){
   LS.set('rtq',{from:from,to:to,cap:cap,extra:extra});
   var tok=++RT.tok,go=$('rtGo');go.disabled=true;go.textContent='Calcul…';
   var live=function(){return tok===RT.tok};
-  rtSum('Recherche de l\'itinéraire…');
+  rtSum((!from||/^ma position$/i.test(from))?'Recherche de votre position GPS…':'Recherche de l\'itinéraire…');
   var pa=(!from||/^ma position$/i.test(from))?herePos():geocode(from);
   Promise.all([pa,geocode(to)]).then(function(ab){
     if(!live())return;
@@ -2187,6 +2207,7 @@ function rtShow(){
       '<span class="m">'+(Math.round(r.len*10)/10).toString().replace('.',',')+' km · '+avg+' km/h de moyenne · '+toll+cmp+'</span></button>';
   }).join('');
   rtSteps();rtDraw();
+  try{$('rtSum').scrollIntoView({behavior:'smooth',block:'start'})}catch(e){}
 }
 function rtSteps(){
   var r=RT.routes[RT.sel];if(!r)return;
