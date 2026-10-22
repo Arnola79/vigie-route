@@ -234,6 +234,12 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 .navc-top b{font:700 30px/1 var(--font-num);color:var(--accent);font-variant-numeric:tabular-nums}
 .navc-x{width:36px;height:36px;border-radius:8px;border:1px solid var(--line);background:none;color:var(--fg-dim);font-size:16px;cursor:pointer}
 .navc-txt{font-size:18px;font-weight:600;line-height:1.3}
+.ttusage{display:grid;gap:6px;margin-top:12px;font-size:13px}
+.ttusage small{color:var(--fg-dim);font-size:11px}
+.ttu{display:grid;grid-template-columns:1fr auto;gap:2px 8px}
+.ttu span:last-of-type{font-variant-numeric:tabular-nums;color:var(--fg-dim)}
+.ttu i{grid-column:1/-1;height:5px;border-radius:3px;background:var(--surface-2);overflow:hidden}
+.ttu i b{display:block;height:100%}
 .navc-inc{font-size:14px;font-weight:600;color:var(--warn)}
 .navc-sub{font-size:13px;color:var(--fg-dim)}
 .rt-map{width:100%;height:300px;display:block;border-radius:10px;background:var(--surface-2);border:1px solid var(--line)}
@@ -250,7 +256,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v37</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v38</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -398,6 +404,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
         <p style="margin:6px 0 0;font-size:12px;color:var(--fg-dim)">Avec une clé, les temps tiennent compte des vitesses réellement pratiquées. La clé reste sur ce téléphone.</p>
         <label style="display:flex;gap:10px;align-items:center;margin-top:10px;text-transform:none;letter-spacing:0;font-size:14px;color:var(--fg)"><input type="checkbox" id="incOn"> Incidents en temps réel pendant le guidage</label>
         <p id="incInfo" style="margin:4px 0 0;font-size:12px;color:var(--fg-dim)"></p>
+        <div id="ttUsage" class="ttusage"></div>
       </details>
     </div>
     <div class="card rt-sum" id="rtSum" hidden></div>
@@ -1419,7 +1426,7 @@ function showTab(name){
   if(name==='journal')renderJournal();
   if(name==='zones')renderZones();
   if(name==='trajet')renderTrace();
-  if(name==='route')rtDraw();
+  if(name==='route'){rtDraw();ttUsageUI()}
   if(name==='trajet')dmSoon();
   window.scrollTo(0,0);
 }
@@ -1889,6 +1896,14 @@ function rtAvoid(base,live){
 }
 /* ---------- moteur TomTom (si une clé est saisie) ---------- */
 var TT_URL='https://api.tomtom.com/routing/1/calculateRoute/';
+function ttUse(k,n){var m=new Date().toISOString().slice(0,7),c=LS.get('ttuse',null);if(!c||c.m!==m)c={m:m};if(n){c[k]=(c[k]||0)+n;LS.set('ttuse',c)}return c[k]||0}
+function ttUsageUI(){
+  var el=$('ttUsage');if(!el)return;
+  var rows=[['Itinéraires',ttUse('route'),20000],['Limites (trajet libre)',tlCount().n,20000],['Incidents',incCount().n,2500],['Carte (tuiles)',ttUse('tile'),200000]];
+  el.innerHTML='<b>Requêtes TomTom ce mois</b>'+rows.map(function(r){var pc=Math.min(100,r[1]/r[2]*100);
+    return '<div class="ttu"><span>'+r[0]+'</span><span>'+r[1].toLocaleString('fr-FR')+' / '+r[2].toLocaleString('fr-FR')+'</span><i><b style="width:'+pc.toFixed(1)+'%;background:'+(pc>80?'var(--bad)':pc>50?'var(--warn)':'var(--ok)')+'"></b></i></div>'}).join('')+
+    '<small>Quotas gratuits mensuels. Le décompte officiel est sur votre tableau de bord developer.tomtom.com.</small>';
+}
 function ttKey(){var k=LS.get('ttkey','');return typeof k==='string'?k.trim():''}
 function ttParse(r){
   var P=[],cum=[0],man=[];
@@ -1912,7 +1927,7 @@ function ttRoute(pts,avoidLegs,o){
   var url=TT_URL+pts.map(function(p){return p[0].toFixed(6)+','+p[1].toFixed(6)}).join(':')+'/json?key='+encodeURIComponent(ttKey())+
     '&traffic=false&routeType=fastest&sectionType=toll'+(o.cap?'&vehicleMaxSpeed='+o.cap:'')+(o.all?'&avoid='+o.all:'')+(o.guide?'&instructionsType=text&language=fr-FR&sectionType=speedLimit':'');
   var ctl=window.AbortController?new AbortController():null,t=ctl?setTimeout(function(){ctl.abort()},30000):0;
-  var init={signal:ctl?ctl.signal:undefined};
+  var init={signal:ctl?ctl.signal:undefined};ttUse('route',1);
   if(avoidLegs&&avoidLegs.some(Boolean)){init.method='POST';init.headers={'Content-Type':'application/json'};
     init.body=JSON.stringify({legs:avoidLegs.map(function(a){return a?{avoids:[{name:'tollRoads'}]}:{}})})}
   return fetch(url,init).then(function(r){clearTimeout(t);
@@ -1994,7 +2009,7 @@ function dmUrl(z,x,y){
 function dmTile(z,x,y){
   var u=dmUrl(z,x,y),im=DM.tiles[u];
   if(!im){
-    im=new Image();im.onload=dmSoon;im.onerror=function(){};im.src=u;DM.tiles[u]=im;DM.order.push(u);
+    im=new Image();im.onload=dmSoon;im.onerror=function(){};im.src=u;DM.tiles[u]=im;DM.order.push(u);if(u.indexOf('api.tomtom.com')>0)ttUse('tile',1);
     if(DM.order.length>400){var old=DM.order.shift();delete DM.tiles[old]}
   }
   return im.complete&&im.naturalWidth?im:null;
@@ -2313,7 +2328,7 @@ $('rtFollow').addEventListener('click',function(){var r=RT.routes[RT.sel];if(r)n
 $('navX').addEventListener('click',function(){navStop('Guidage arrêté. Le trajet continue.')});
 function rtEngUI(){var k=ttKey();$('rtEngName').textContent=k?'TomTom':'Valhalla (approximatif sur petites routes)';$('rtKey').value=k}
 $('rtKey').addEventListener('change',function(){var v=$('rtKey').value.replace(/\s+/g,'');LS.set('ttkey',v);rtEngUI();toast(v?'Clé TomTom enregistrée.':'Clé retirée : calcul par Valhalla.')});
-rtEngUI();tlUI();
+rtEngUI();tlUI();ttUsageUI();$('rtEng').addEventListener('toggle',ttUsageUI);
 $('incOn').addEventListener('change',function(){LS.set('incon',$('incOn').checked)});incUI();
 ['rtFrom','rtTo','rtCap','rtExtra'].forEach(function(id){$(id).addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();$(id).blur();rtCompute()}})});
 $('rtHere').addEventListener('click',function(){$('rtFrom').value='Ma position';toast('Départ : votre position au moment du calcul.')});
