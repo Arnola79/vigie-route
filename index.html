@@ -256,7 +256,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v39</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v40</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -321,6 +321,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
         <div class="step"><button type="button" id="mMinus" aria-label="Réduire la marge">−</button><output id="mVal">0</output><button type="button" id="mPlus" aria-label="Augmenter la marge">+</button></div>
       </div>
       <label class="row"><span>Limites de vitesse TomTom uniquement<small id="tlInfo"></small></span><input type="checkbox" id="optTtlim"></label>
+      <label class="row"><span>Traiter les 20 km/h comme 30<small>Les 20 km/h fournis par TomTom sont souvent faux (Espagne). Décochez pour les garder.</small></span><input type="checkbox" id="optNo20"></label>
       <label class="row"><span>Zones de danger de la carte<small>OpenStreetMap, mises à jour automatiquement</small></span><input type="checkbox" id="optCams"></label>
       <div class="row"><span>Carte hors ligne<small id="offStatus">Aucune zone en mémoire.</small></span><button class="btn" type="button" id="btnPre" style="height:40px">Précharger</button></div>
       <div class="row"><span>Tester la carte<small id="mapTest">Vérifie l'accès à OpenStreetMap</small></span><button class="btn" type="button" id="btnMapTest" style="height:40px">Tester</button></div>
@@ -1455,8 +1456,8 @@ $('mMinus').addEventListener('click',function(){settings.margin=Math.max(0,setti
 $('mPlus').addEventListener('click',function(){settings.margin=Math.min(10,settings.margin+1);saveSettings();render()});
 function applyAudio(){if(NAT&&NAT.audioPause){try{NAT.audioPause(!!settings.audioPause)}catch(e){}}}
 applyAudio();
-[['optCams','cams'],['optSound','sound'],['optVoice','voice'],['optVibe','vibrate'],['optPause','audioPause'],['optTtlim','ttlim']].forEach(function(p){
-  var el=$(p[0]);el.checked=p[1]==='ttlim'?settings.ttlim!==false:!!settings[p[1]];
+[['optCams','cams'],['optSound','sound'],['optVoice','voice'],['optVibe','vibrate'],['optPause','audioPause'],['optTtlim','ttlim'],['optNo20','no20']].forEach(function(p){
+  var el=$(p[0]);el.checked=(p[1]==='ttlim'||p[1]==='no20')?settings[p[1]]!==false:!!settings[p[1]];
   el.addEventListener('change',function(){settings[p[1]]=el.checked;saveSettings();if(p[1]==='cams')renderCamStatus();if(p[1]==='audioPause')applyAudio()});
 });
 $('btnAddZone').addEventListener('click',function(){
@@ -2094,12 +2095,13 @@ function startChooser(){
 /* ---------- limites TomTom en trajet libre (géocodage inverse, quota 20 000 / mois) ---------- */
 var TL={lim:null,road:null,at:0,pos:null,hd:null,busy:false,same:0,last:null,pend:null,trail:[]};
 var TL_MAX=18000;
+function no20(l){return l===20&&settings.no20!==false?30:l}
 function ttOnly(){return !!ttKey()&&settings.ttlim!==false}
 function tlCount(){var m=new Date().toISOString().slice(0,7),c=LS.get('ttrev',null);if(!c||c.m!==m)c={m:m,n:0};return c}
 function tlUI(){var el=$('tlInfo');if(el){var c=tlCount();el.textContent=ttKey()?('Requêtes ce mois : '+c.n+' / '+TL_MAX+' (gratuit jusqu\'à 20 000)'):'Nécessite la clé TomTom (onglet Itinéraire).'}}
 /* mémoire locale des limites TomTom : [lat, lon, limite, cap (-1 inconnu), rue, jour] par cellule d'environ 110 m */
 var TLC={cells:{},n:0,dirty:false,ready:false};
-idbGet('ttlc').then(function(v){if(v&&typeof v==='object'){for(var k in v){if(!TLC.cells[k])TLC.cells[k]=v[k]}}TLC.n=0;for(var k2 in TLC.cells)TLC.n+=TLC.cells[k2].length;TLC.ready=true}).catch(function(){TLC.ready=true});
+idbGet('ttlc').then(function(v){if(LS.get('ttlcv',0)<2){v=null;LS.set('ttlcv',2);idbPut('ttlc',{}).catch(function(){})}if(v&&typeof v==='object'){for(var k in v){if(!TLC.cells[k])TLC.cells[k]=v[k]}}TLC.n=0;for(var k2 in TLC.cells)TLC.n+=TLC.cells[k2].length;TLC.ready=true}).catch(function(){TLC.ready=true});
 function tlcKey(la,lo){return Math.round(la*900)+'_'+Math.round(lo*900)}
 function tlcDay(){return Math.floor(Date.now()/864e5)}
 function tlcPut(la,lo,lim,road,hd,derived){
@@ -2124,7 +2126,7 @@ function tlcGet(f,hd){
       var e=c[i];if(today-e[5]>180)continue;
       if(hd!=null&&e[3]>=0&&angDiff(e[3],hd)>50&&angDiff(e[3],(hd+180)%360)>50)continue;
       var d=dist(f,{lat:e[0],lon:e[1]});
-      if(d<=30&&(!best||d<best.d))best={d:d,lim:e[2],road:e[4]||null};
+      if(d<=30&&(!best||d<best.d||(best.der&&!e[6]&&d<best.d+10)))best={d:d,lim:e[2],road:e[4]||null,der:!!e[6]};
     }
   }
   return best;
@@ -2164,14 +2166,15 @@ function ttLimit(f){
   if(!TL.cpos||dist(TL.cpos,f)>40||TL.pend){
     TL.cpos={lat:f.lat,lon:f.lon};
     var h=tlcGet(f,sp>8?S.heading:null);TL.hit=!!h;
-    if(h){tlApply(h.lim,h.road,f);TL.pos={lat:f.lat,lon:f.lon};TL.hd=S.heading;ttUse('cache',1)}
+    if(h&&!h.der){tlApply(h.lim,h.road,f);TL.pos={lat:f.lat,lon:f.lon};TL.hd=S.heading;TL.fromCache=true;ttUse('cache',1)}
+    else if(h&&h.der&&h.lim!==TL.lim)TL.hit=false;
   }
   /* 2) TomTom, seulement là où la mémoire ne sait rien */
-  var moved=TL.pos?dist(TL.pos,f):1e9,thr=TL.pend?40:Math.max(150,sp*5)*(TL.same>=2?2:1);
+  var moved=TL.pos?dist(TL.pos,f):1e9,thr=TL.pend?40:Math.max(150,sp*5)*(TL.same>=2?2:1)*(TL.fromCache?1.5:1)+(TL.fromCache?60:0);
   var turned=TL.hd!=null&&S.heading!=null&&angDiff(TL.hd,S.heading)>35&&moved>40;
   var need=!TL.pos||moved>thr||turned||(TL.lim==null&&now-TL.at>15000&&moved>20);
   if(need&&c.n<TL_MAX&&!TL.busy&&now-TL.at>=(TL.pend?2500:4000)&&navigator.onLine!==false&&(sp>3||TL.lim==null)){
-    TL.busy=true;TL.at=now;TL.pos={lat:f.lat,lon:f.lon};TL.hd=S.heading;c.n++;LS.set('ttrev',c);
+    TL.busy=true;TL.at=now;TL.pos={lat:f.lat,lon:f.lon};TL.hd=S.heading;TL.fromCache=false;c.n++;LS.set('ttrev',c);
     var hd=S.heading!=null&&sp>8?S.heading:null;
     var url='https://api.tomtom.com/search/2/reverseGeocode/'+f.lat.toFixed(6)+','+f.lon.toFixed(6)+'.json?key='+encodeURIComponent(ttKey())+
       '&returnSpeedLimit=true&radius=40&language=fr-FR'+(hd!=null?'&heading='+Math.round(hd):'');
@@ -2192,7 +2195,7 @@ function ttLimit(f){
   A.cur.road=TL.road;A.cur.wid=ok;A.cur.lim=TL.lim;A.cur.src='tomtom';
   if(ok&&OVR[ok]!=null){A.cur.lim=OVR[ok];A.cur.src='corrigee';return {lim:OVR[ok],src:'corrigee'}}
   if(TL.lim==null)return null;
-  return {lim:TL.lim,src:'tomtom'};
+  return {lim:no20(TL.lim),src:'tomtom'};
 }
 /* ---------- sauvegarde / restauration du journal ---------- */
 function bakData(){
@@ -2347,7 +2350,7 @@ function navTick(f){
   navRender();
   /* limitation TomTom de la portion où l'on roule */
   var lims=r.lims||[];
-  for(var k=0;k<lims.length;k++)if(m.i>=lims[k].beg&&m.i<lims[k].end)return {lim:lims[k].lim,src:'itin'};
+  for(var k=0;k<lims.length;k++)if(m.i>=lims[k].beg&&m.i<lims[k].end)return {lim:no20(lims[k].lim),src:'itin'};
   return null;
 }
 function navReroute(f){
