@@ -256,7 +256,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v41</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v42</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -567,7 +567,7 @@ function setGps(state,acc){
 
 /* ---------- trajet ---------- */
 function beginTrip(demo){
-  TL={lim:null,road:null,at:0,pos:null,hd:null,busy:false,same:0,last:null,pend:null,trail:[]};
+  TL={lim:null,road:null,at:0,pos:null,hd:null,busy:false,same:0,last:null,pend:null,trail:[],crumbs:[]};
   setTimeout(function(){dmShow(true)},0);
   S.mode=demo?'demo':'live';
   S.last=null;S.speed=0;S.heading=null;S.zoneState={};S.zoneInfo={level:'none'};S.curLimitZone=false;S.lastBeepAt=0;S.limSrc=demo?'demo':'inconnue';
@@ -1910,7 +1910,7 @@ var TT_URL='https://api.tomtom.com/routing/1/calculateRoute/';
 function ttUse(k,n){var m=new Date().toISOString().slice(0,7),c=LS.get('ttuse',null);if(!c||c.m!==m)c={m:m};if(n){c[k]=(c[k]||0)+n;LS.set('ttuse',c)}return c[k]||0}
 function ttUsageUI(){
   var el=$('ttUsage');if(!el)return;
-  var rows=[['Itinéraires',ttUse('route'),20000],['Limites (trajet libre)',tlCount().n,20000],['Incidents',incCount().n,2500],['Carte (tuiles)',ttUse('tile'),200000],['Limites lues en mémoire (gratuit)',ttUse('cache'),0]];
+  var rows=[['Itinéraires et limites (calcul d\'itinéraire)',ttUse('route')+tlCount().n,20000],['Incidents',incCount().n,2500],['Carte (tuiles)',ttUse('tile'),200000],['Limites lues en mémoire (gratuit)',ttUse('cache'),0]];
   el.innerHTML='<b>Requêtes TomTom ce mois</b>'+rows.map(function(r){if(!r[2])return '<div class="ttu"><span>'+r[0]+'</span><span>'+r[1].toLocaleString('fr-FR')+'</span></div>';var pc=Math.min(100,r[1]/r[2]*100);
     return '<div class="ttu"><span>'+r[0]+'</span><span>'+r[1].toLocaleString('fr-FR')+' / '+r[2].toLocaleString('fr-FR')+'</span><i><b style="width:'+pc.toFixed(1)+'%;background:'+(pc>80?'var(--bad)':pc>50?'var(--warn)':'var(--ok)')+'"></b></i></div>'}).join('')+
     '<small>Quotas gratuits mensuels. Le décompte officiel est sur votre tableau de bord developer.tomtom.com.</small>';
@@ -2096,15 +2096,15 @@ function startChooser(){
   $('startPick').hidden=false;
 }
 /* ---------- limites TomTom en trajet libre (géocodage inverse, quota 20 000 / mois) ---------- */
-var TL={lim:null,road:null,at:0,pos:null,hd:null,busy:false,same:0,last:null,pend:null,trail:[]};
+var TL={lim:null,road:null,at:0,pos:null,hd:null,busy:false,same:0,last:null,pend:null,trail:[],crumbs:[]};
 var TL_MAX=18000;
 function no20(l){return l===20&&settings.no20!==false?30:l}
 function ttOnly(){return !!ttKey()&&settings.ttlim!==false}
 function tlCount(){var m=new Date().toISOString().slice(0,7),c=LS.get('ttrev',null);if(!c||c.m!==m)c={m:m,n:0};return c}
-function tlUI(){var el=$('tlInfo');if(el){var c=tlCount();el.textContent=ttKey()?('Requêtes ce mois : '+c.n+' / '+TL_MAX+' (gratuit jusqu\'à 20 000)'):'Nécessite la clé TomTom (onglet Itinéraire).'}}
+function tlUI(){var el=$('tlInfo');if(el){var c=tlCount();el.textContent=ttKey()?('Requêtes ce mois : '+c.n+' (partagées avec les itinéraires, gratuit jusqu\'à 20 000 au total)'):'Nécessite la clé TomTom (onglet Itinéraire).'}}
 /* mémoire locale des limites TomTom : [lat, lon, limite, cap (-1 inconnu), rue, jour] par cellule d'environ 110 m */
 var TLC={cells:{},n:0,dirty:false,ready:false};
-idbGet('ttlc').then(function(v){if(LS.get('ttlcv',0)<2){v=null;LS.set('ttlcv',2);idbPut('ttlc',{}).catch(function(){})}if(v&&typeof v==='object'){for(var k in v){if(!TLC.cells[k])TLC.cells[k]=v[k]}}TLC.n=0;for(var k2 in TLC.cells)TLC.n+=TLC.cells[k2].length;TLC.ready=true}).catch(function(){TLC.ready=true});
+idbGet('ttlc').then(function(v){if(LS.get('ttlcv',0)<3){v=null;LS.set('ttlcv',3);idbPut('ttlc',{}).catch(function(){})}if(v&&typeof v==='object'){for(var k in v){if(!TLC.cells[k])TLC.cells[k]=v[k]}}TLC.n=0;for(var k2 in TLC.cells)TLC.n+=TLC.cells[k2].length;TLC.ready=true}).catch(function(){TLC.ready=true});
 function tlcKey(la,lo){return Math.round(la*900)+'_'+Math.round(lo*900)}
 function tlcDay(){return Math.floor(Date.now()/864e5)}
 function tlcPut(la,lo,lim,road,hd,derived){
@@ -2148,7 +2148,8 @@ function tlcSeedRoute(r){
     }
   });
 }
-function tlApply(lim,road,f){
+function tlApply(lim,road,f,strong){
+  if(strong&&lim!=null){var ch=lim!==TL.lim;TL.same=ch?0:TL.same+1;TL.lim=lim;TL.road=road||TL.road;TL.pend=null;TL.last={lat:f.lat,lon:f.lon};return 'ok'}
   /* un changement de limite n'est adopté que s'il est confirmé par une 2e lecture un peu plus loin
      (évite de prendre la limite d'une ruelle voisine à un carrefour ou si le GPS dérive) */
   if(lim!=null){
@@ -2163,7 +2164,7 @@ function tlApply(lim,road,f){
 function ttLimit(f){
   var now=Date.now(),sp=S.speed,c=tlCount();
   /* saut de position (tunnel, perte du GPS, démarrage) : on oublie la limite en cours plutôt que de la propager */
-  if(TL.fix&&(dist(TL.fix,f)>400||(f.t||now)-TL.fix.t>60000)){TL.lim=null;TL.road=null;TL.pend=null;TL.trail=[];TL.pos=null;TL.cpos=null;TL.last=null;TL.same=0}
+  if(TL.fix&&(dist(TL.fix,f)>400||(f.t||now)-TL.fix.t>60000)){TL.lim=null;TL.road=null;TL.pend=null;TL.trail=[];TL.crumbs=[];TL.pos=null;TL.cpos=null;TL.last=null;TL.same=0}
   TL.fix={lat:f.lat,lon:f.lon,t:f.t||now};
   /* 1) mémoire locale : lue tous les 40 m, gratuite */
   if(!TL.cpos||dist(TL.cpos,f)>40||TL.pend){
@@ -2176,22 +2177,33 @@ function ttLimit(f){
   var moved=TL.pos?dist(TL.pos,f):1e9,thr=TL.pend?40:Math.max(150,sp*5)*(TL.same>=2?2:1)*(TL.fromCache?1.5:1)+(TL.fromCache?60:0);
   var turned=TL.hd!=null&&S.heading!=null&&angDiff(TL.hd,S.heading)>35&&moved>40;
   var need=!TL.pos||moved>thr||turned||(TL.lim==null&&now-TL.at>15000&&moved>20);
-  if(need&&c.n<TL_MAX&&!TL.busy&&now-TL.at>=(TL.pend?2500:4000)&&navigator.onLine!==false&&(sp>3||TL.lim==null)){
+  /* fil d'Ariane des dernières positions (≈ 200 m) : TomTom reconstitue la route réellement suivie */
+  var cr=TL.crumbs||(TL.crumbs=[]),lc=cr[cr.length-1];
+  if(!lc||dist(lc,f)>=20){cr.push({lat:f.lat,lon:f.lon});var tot=0;for(var q=cr.length-1;q>0;q--){tot+=dist(cr[q],cr[q-1]);if(tot>200){cr.splice(0,q-1);break}}}
+  var span=0;for(var q2=cr.length-1;q2>0;q2--)span+=dist(cr[q2],cr[q2-1]);
+  if(need&&span>=60&&c.n+ttUse('route')<TL_MAX&&!TL.busy&&now-TL.at>=(TL.pend?2500:4000)&&navigator.onLine!==false){
     TL.busy=true;TL.at=now;TL.pos={lat:f.lat,lon:f.lon};TL.hd=S.heading;TL.fromCache=false;c.n++;LS.set('ttrev',c);
-    var hd=S.heading!=null&&sp>8?S.heading:null;
-    var url='https://api.tomtom.com/search/2/reverseGeocode/'+f.lat.toFixed(6)+','+f.lon.toFixed(6)+'.json?key='+encodeURIComponent(ttKey())+
-      '&returnSpeedLimit=true&radius=40&language=fr-FR'+(hd!=null?'&heading='+Math.round(hd):'');
-    fetchJson(url,8000).then(function(j){
-      var a=j&&j.addresses&&j.addresses[0],ad=a&&a.address||{},m=/^([\d.]+)\s*(KPH|MPH)/.exec(ad.speedLimit||'');
-      var lim=m?Math.round(+m[1]*(m[2]==='MPH'?1.609:1)):null,road=ad.streetName||ad.street||null;
-      var prev=TL.lim,st=tlApply(lim,road,f);
-      if(lim!=null&&st!=='pend'){
-        tlcPut(f.lat,f.lon,lim,road,hd);
-        if(typeof st==='object')tlcPut(st.at.lat,st.at.lon,st.lim,st.road,st.hd);
-        if(lim!==prev)tlcDrop(TL.trail);
-        TL.trail=[];
-      }
-    }).catch(function(){}).then(function(){TL.busy=false;tlUI()});
+    var pts=cr.slice(),o=pts[0],dd=pts[pts.length-1];
+    if(dist(dd,f)>3)pts.push({lat:f.lat,lon:f.lon}),dd=pts[pts.length-1];
+    var url=TT_URL+o.lat.toFixed(6)+','+o.lon.toFixed(6)+':'+dd.lat.toFixed(6)+','+dd.lon.toFixed(6)+'/json?key='+encodeURIComponent(ttKey())+
+      '&traffic=false&routeType=shortest&sectionType=speedLimit&instructionsType=coded&language=fr-FR';
+    var ctl=window.AbortController?new AbortController():null,tmo=setTimeout(function(){if(ctl)ctl.abort()},9000);
+    fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({supportingPoints:pts.map(function(p){return {latitude:+p.lat.toFixed(6),longitude:+p.lon.toFixed(6)}})}),signal:ctl?ctl.signal:undefined})
+    .then(function(r){clearTimeout(tmo);return r.json()}).then(function(j){
+      var rt=j&&j.routes&&j.routes[0];if(!rt)return;
+      var P=[];(rt.legs||[]).forEach(function(l){(l.points||[]).forEach(function(x){P.push([x.latitude,x.longitude])})});
+      var n=P.length,lim=null,road=null;
+      (rt.sections||[]).forEach(function(sc){if(sc.sectionType==='SPEED_LIMIT'&&sc.maxSpeedLimitInKmh){
+        if(sc.endPointIndex>=n-2)lim=sc.maxSpeedLimitInKmh;
+        /* mémoire : la limite de chaque portion réellement parcourue */
+        var nx=null;for(var k=sc.startPointIndex;k<sc.endPointIndex&&k+1<n;k++){var pk={lat:P[k][0],lon:P[k][1]};if(nx&&dist(nx,pk)<40)continue;nx=pk;tlcPut(pk.lat,pk.lon,sc.maxSpeedLimitInKmh,null,bearing(pk,{lat:P[k+1][0],lon:P[k+1][1]}))}
+      }});
+      var ins=(rt.guidance&&rt.guidance.instructions)||[];for(var k2=ins.length-1;k2>=0;k2--){if(ins[k2].street){road=ins[k2].street;break}}
+      var prev=TL.lim;
+      tlApply(lim,road,f,lim!=null);
+      if(lim!=null&&lim!==prev)tlcDrop(TL.trail);
+      if(lim!=null)TL.trail=[];
+    }).catch(function(){clearTimeout(tmo)}).then(function(){TL.busy=false;tlUI()});
   }
   if(TL.lim!=null&&!TL.pend&&!TL.hit&&TL.last&&dist(TL.last,f)<700&&(!TL.dpos||dist(TL.dpos,f)>40)){TL.dpos={lat:f.lat,lon:f.lon};var de=tlcPut(f.lat,f.lon,TL.lim,TL.road,sp>8?S.heading:null,true);if(de){(TL.trail=TL.trail||[]).push(de)}}
   var ok=TL.road?'tt:'+TL.road+'@'+(Math.round(f.lat*20)/20).toFixed(2)+','+(Math.round(f.lon*20)/20).toFixed(2):null;
