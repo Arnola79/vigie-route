@@ -256,7 +256,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v40</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v41</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -743,7 +743,7 @@ function overpass(q,tmo){
         if(i>0){var u=OSM_URLS.splice(i,1)[0];OSM_URLS.unshift(u);LS.set('mirror',u)}
         return {json:j,host:host,ms:Date.now()-t0,errs:errs};
       })
-      .catch(function(e){clearTimeout(to);errs.push(host+' : '+(e&&e.name==='AbortError'?'délai dépassé':((e&&e.message)||'réseau')));return step(i+1)});
+      .catch(function(e){clearTimeout(to);errs.push(host+' : '+(e&&e.name==='AbortError'?'délai dépassé':((e&&e.message)||'réseau')));if(i===0&&errs.length===1&&OSM_URLS.length>1){var bad=OSM_URLS.shift();OSM_URLS.push(bad);LS.set('mirror',OSM_URLS[0]);return step(0)}return step(i+1)});
   }
   return step(0);
 }
@@ -946,16 +946,18 @@ function pump(){
   if(navigator.onLine===false)return;
   var k=T.q.shift();T.busy=true;T.cur=k;
   fetchTile(k).then(function(tile){
-    return storeTile(k,tile).then(function(){T.done++;T.fail=null;A.warned=false});
+    return storeTile(k,tile).then(function(){T.done++;T.fail=null;T.back=0;A.warned=false});
   }).catch(function(errs){
-    T.fail=Array.isArray(errs)&&errs.length?errs[0]:'réponse illisible';
-    T.q.push(k);T.retryAt=Date.now()+30000;
-    if(S.mode==='live')warnMap('Chargement de la carte impossible ('+T.fail+'). Les zones déjà en mémoire restent utilisables.');
+    T.fail=Array.isArray(errs)&&errs.length?errs.join(' · '):'réponse illisible';
+    T.back=Math.min(600000,(T.back||15000)*2);
+    T.q.push(k);T.retryAt=Date.now()+T.back;T.failAt=Date.now();
+    /* en mode TomTom la carte OSM ne sert qu'aux zones de danger : pas de message en plein trajet */
+    if(S.mode==='live'&&!ttOnly())warnMap('Chargement de la carte impossible ('+T.fail.split(' · ')[0]+'). Les zones déjà en mémoire restent utilisables.');
   }).then(function(){
     T.busy=false;T.cur=null;
     if(S.last)rebuildActive(S.last);else renderOffline();
     if(!T.q.length){T.total=0;T.done=0;renderOffline()}
-    setTimeout(pump,T.fail?31000:700);
+    setTimeout(pump,T.fail?(T.back||30000)+1000:700);
   });
 }
 function tileTick(f){
@@ -965,7 +967,7 @@ function tileTick(f){
   var t=Date.now(),first=T.planAt===0;
   if(t-T.planAt>15000){
     T.planAt=t;
-    var todo=planPrefetch(f,first?3:1,true);
+    var todo=planPrefetch(f,first?(ttOnly()?2:3):1,true);
     if(todo.length)enqueue(todo,f);
   }
 }
@@ -976,6 +978,7 @@ function renderOffline(){
   if(el){
     var t=keys.length?keys.length+' zone'+(keys.length>1?'s':'')+' en mémoire (environ '+Math.round(area)+' km²), mise à jour le '+new Date(newest).toLocaleDateString('fr-FR',{day:'numeric',month:'short'})+'.':'Aucune zone en mémoire.';
     if(T.q.length||T.busy)t+=' Téléchargement '+Math.min(T.done+(T.busy?1:0),T.total)+'/'+T.total+'.';
+    if(T.fail)t+=' Serveurs OpenStreetMap indisponibles pour l\'instant, nouvel essai automatique ('+T.fail+').';
     el.textContent=t;
   }
   renderCamStatus();
@@ -1539,7 +1542,7 @@ function autoPre(){
   if(EMBEDDED||navigator.onLine===false)return;
   var p=S.last||nativePos();if(!p)return;
   var todo=planPrefetch(p,3,false);
-  if(todo.length){T.retryAt=0;enqueue(todo,p)}
+  if(todo.length)enqueue(todo,p);
 }
 window.__autoPre=autoPre;
 window.__notice=function(m){toast(m,8000)};
