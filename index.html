@@ -256,7 +256,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v43</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v44</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -1553,13 +1553,6 @@ function autoPre(){
 window.__autoPre=autoPre;
 window.__notice=function(m){toast(m,8000)};
 window.__applyUpdate=function(){if(S.mode==='idle')location.reload();else toast('Mise à jour téléchargée : elle s\'appliquera au prochain lancement.',8000)};
-if(NAT){
-  var ur=document.createElement('div');ur.className='row';
-  ur.innerHTML='<span>Mise à jour de l\'application<small id="updInfo">Vérifiée automatiquement toutes les 6 h</small></span><button class="btn" type="button" id="btnUpd" style="height:40px">Vérifier</button>';
-  var mt=$('btnMapTest').parentNode;
-  if(mt&&mt.parentNode){mt.parentNode.insertBefore(ur,mt);
-  $('btnUpd').addEventListener('click',function(){$('updInfo').textContent='Vérification…';try{NAT.checkUpdate()}catch(e){$('updInfo').textContent='Indisponible'}})}
-}
 window.addEventListener('online',function(){T.retryAt=0;pump();autoPre()});
 setInterval(autoPre,3600000);
 setTimeout(autoPre,1500);
