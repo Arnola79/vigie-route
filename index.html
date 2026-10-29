@@ -256,11 +256,16 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v42</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v43</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
   <section class="panel" id="tab-trajet" role="tabpanel" aria-label="Trajet">
+    <div class="card note" id="apkCard" hidden>
+      <h2>Mise à jour Android</h2>
+      <p id="apkTxt">Une nouvelle version de l'application est disponible. Elle se télécharge et s'installe par-dessus l'actuelle : trajets et réglages sont conservés.</p>
+      <div class="actions" style="grid-template-columns:1fr 1fr"><button class="btn primary" type="button" id="apkGo">Installer</button><button class="btn" type="button" id="apkLater">Plus tard</button></div>
+    </div>
     <div class="card navc" id="navCard" hidden>
       <div class="navc-top"><b id="navDist"></b><button type="button" class="navc-x" id="navX" aria-label="Arrêter le guidage">✕</button></div>
       <div class="navc-txt" id="navTxt"></div>
@@ -567,6 +572,7 @@ function setGps(state,acc){
 
 /* ---------- trajet ---------- */
 function beginTrip(demo){
+  setTimeout(apkShow,0);
   TL={lim:null,road:null,at:0,pos:null,hd:null,busy:false,same:0,last:null,pend:null,trail:[],crumbs:[]};
   setTimeout(function(){dmShow(true)},0);
   S.mode=demo?'demo':'live';
@@ -617,7 +623,7 @@ function stopTrip(discard){
     else{trips.unshift(summarize(tr));if(!wasDemo)saveTrips()}
   }
   LS.del('active');
-  S.mode='idle';S.zoneInfo={level:'none'};S.curLimitZone=false;NAV=null;navRender();dmShow(false);tlcSave();if(S.muted)setMute(false);
+  S.mode='idle';S.zoneInfo={level:'none'};S.curLimitZone=false;NAV=null;navRender();dmShow(false);tlcSave();apkShow();if(S.muted)setMute(false);
   setGps('idle');render();renderJournal();
 }
 
@@ -2241,6 +2247,16 @@ function bakRestore(text){
   renderJournal();renderZones();renderOvr();
   toast('Restauration : '+nt+' trajet'+(nt>1?'s':'')+', '+nz+' zone'+(nz>1?'s':'')+', '+no+' correction'+(no>1?'s':'')+' ajoutés.',8000);
 }
+var APKUPD=false;
+function apkShow(){var c=$('apkCard');if(c)c.hidden=!(APKUPD&&S.mode==='idle')}
+window.__apkUpdate=function(){APKUPD=true;apkShow()};
+window.__apkProgress=function(p){
+  var t=$('apkTxt'),b=$('apkGo');if(!t)return;
+  if(p>=0&&p<100){t.textContent='Téléchargement de la mise à jour… '+p+' %';b.disabled=true}
+  else if(p===100){t.textContent='Android va demander de confirmer : touchez « Installer » (ou « Mettre à jour »).';b.disabled=false}
+  else if(p===-3){t.textContent='Android demande d\'autoriser Vigie Route à installer des applications : activez l\'autorisation, revenez ici puis touchez Installer.';b.disabled=false}
+  else{t.textContent='Téléchargement impossible. Vérifiez la connexion puis réessayez.';b.disabled=false}
+};
 window.__pickedFile=function(name,text){if(text==null){toast('Fichier non lu.');return}bakRestore(text)};
 function bakPick(){
   if(NAT&&NAT.pickFile){try{NAT.pickFile();return}catch(e){}}
@@ -2465,6 +2481,8 @@ function rtEngUI(){var k=ttKey();$('rtEngName').textContent=k?'TomTom':'Valhalla
 $('rtKey').addEventListener('change',function(){var v=$('rtKey').value.replace(/\s+/g,'');LS.set('ttkey',v);rtEngUI();toast(v?'Clé TomTom enregistrée.':'Clé retirée : calcul par Valhalla.')});
 rtEngUI();tlUI();ttUsageUI();bakUI();
 $('btnBak').addEventListener('click',bakSave);
+$('apkGo').addEventListener('click',function(){if(NAT&&NAT.installApk){try{NAT.installApk()}catch(e){}}});
+$('apkLater').addEventListener('click',function(){$('apkCard').hidden=true;APKUPD=false});
 $('btnRest').addEventListener('click',bakPick);
 $('bakFile').addEventListener('change',function(e){var f=e.target.files&&e.target.files[0];if(!f)return;var r=new FileReader();r.onload=function(){bakRestore(String(r.result))};r.readAsText(f);e.target.value=''});$('rtEng').addEventListener('toggle',ttUsageUI);
 $('incOn').addEventListener('change',function(){LS.set('incon',$('incOn').checked)});incUI();
