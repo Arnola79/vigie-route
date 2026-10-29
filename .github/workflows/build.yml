@@ -17,6 +17,14 @@ jobs:
           sed -i 's/abandonAudioFocus(focus)/abandonAudioFocusRequest(focus)/' build/app/src/main/java/fr/vigie/route/Sound.java
           cp index.html build/app/src/main/assets/index.html
           echo "https://raw.githubusercontent.com/${{ github.repository }}/main/index.html" > build/app/src/main/assets/update_url.txt
+      - name: Publier la version web (GitHub Pages)
+        run: |
+          mkdir site && cp index.html site/index.html && touch site/.nojekyll
+          cd site
+          git init -q -b gh-pages
+          git add -A
+          git -c user.name="github-actions" -c user.email="github-actions@users.noreply.github.com" commit -q -m "Version web, build n°${{ github.run_number }}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" gh-pages
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
