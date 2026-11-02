@@ -256,7 +256,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v47</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v48</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -660,6 +660,8 @@ function onFix(f){
   }
   var nl=navTick(f);
   var al=zl?null:(nl||(ttOnly()?ttLimit(f):autoLimit(f)));
+  S.curRaw=al&&al.raw!=null?al.raw:null;S.curOz=null;
+  if(al&&al.raw!=null){var oz=ovzApply(f,al.raw);if(oz){S.curOz=oz;al={lim:oz.to,raw:al.raw,src:'corrigee'}}}
   var lim,src;
   if(zl){lim=zl.limit;src='zone'}
   else if(S.mode==='demo'){lim=80;src='demo'}
@@ -1457,7 +1459,7 @@ function showTab(name){
     $('tb-'+n).setAttribute('aria-selected',String(n===name));
   });
   if(name==='journal')renderJournal();
-  if(name==='zones')renderZones();
+  if(name==='zones'){renderZones();renderOvr()}
   if(name==='trajet')renderTrace();
   if(name==='route'){rtDraw();ttUsageUI()}
   if(name==='trajet')dmSoon();
@@ -1650,8 +1652,15 @@ try{window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',
 function renderOvr(){
   var box=$('ovrList');if(!box)return;
   var ids=Object.keys(OVR);
-  $('ovrEmpty').hidden=ids.length>0;$('ovrActs').hidden=!ids.length;
+  $('ovrEmpty').hidden=ids.length+OVZ.length>0;$('ovrActs').hidden=!ids.length;
   box.innerHTML='';
+  OVZ.forEach(function(z){
+    var r=document.createElement('div');r.style.cssText='display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border,#444)';
+    var t=document.createElement('span');t.style.cssText='flex:1;font-size:14px';t.textContent=z.name+' · TomTom '+z.from+' · '+Math.max(0,Math.round((z.p.length-1)*0.03*10)/10)+' km';
+    var l=document.createElement('b');l.style.cssText='font:700 18px var(--font-num)';l.textContent=z.to;
+    var b=document.createElement('button');b.type='button';b.className='btn';b.textContent='Retirer';b.dataset.id='z:'+z.id;
+    r.appendChild(t);r.appendChild(l);r.appendChild(b);box.appendChild(r);
+  });
   ids.forEach(function(id){
     var r=document.createElement('div');r.style.cssText='display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border,#444)';
     var t=document.createElement('span');t.style.cssText='flex:1;font-size:14px';t.textContent=(OVN[id]||('Route '+id));
@@ -1661,7 +1670,7 @@ function renderOvr(){
   });
 }
 (function(){
-  $('ovrList').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;delete OVR[b.dataset.id];delete OVN[b.dataset.id];LS.set('ovr',OVR);LS.set('ovrn',OVN);A.cur.key=null;renderOvr()});
+  $('ovrList').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;if(b.dataset.id.indexOf('z:')===0){var zid=b.dataset.id.slice(2);OVZ=OVZ.filter(function(z){return z.id!==zid});ovzSave();renderOvr();return}delete OVR[b.dataset.id];delete OVN[b.dataset.id];LS.set('ovr',OVR);LS.set('ovrn',OVN);A.cur.key=null;renderOvr()});
   $('btnOvrCopy').addEventListener('click',function(){copyText(Object.keys(OVR).map(function(id){return (OVN[id]||('Route '+id))+' ; '+OVR[id]}).join('\n'))});
 })();
 (function(){
@@ -1670,7 +1679,15 @@ function renderOvr(){
   var rm=document.createElement('button');rm.type='button';rm.className='wide';rm.textContent='Retirer ma correction';rm.dataset.v='x';grid.appendChild(rm);
   var cn=document.createElement('button');cn.type='button';cn.className='wide';cn.textContent='Annuler';cn.dataset.v='c';grid.appendChild(cn);
   function close(){lp.hidden=true;wid=null}
+  var zmode=false;
   $('signWrap').addEventListener('click',function(){
+    if(S.mode==='live'&&S.last&&S.curRaw!=null){
+      zmode=true;wid=null;
+      $('lpTitle').textContent='Corriger la limite'+(A.cur.road?' · '+A.cur.road:'');
+      $('lpSub').textContent='TomTom indique '+S.curRaw+' ici. Votre choix s\'appliquera à ce tronçon, dans ce sens, tant que TomTom y indiquera '+S.curRaw+'.';
+      rm.hidden=!S.curOz;lp.hidden=false;return;
+    }
+    zmode=false;
     if(S.mode!=='live'||A.cur.wid==null){toast('Touchez le panneau pendant un trajet, sur une route reconnue, pour corriger sa limite.');return}
     wid=A.cur.wid;
     $('lpTitle').textContent='Corriger la limite'+(A.cur.road?' · '+A.cur.road:'');
@@ -1683,6 +1700,14 @@ function renderOvr(){
     var b=e.target.closest('button');if(!b)return;
     var v=b.dataset.v;
     if(v==='c'){close();return}
+    if(zmode){
+      if(v==='x'){if(S.curOz){OVZ=OVZ.filter(function(z){return z!==S.curOz});S.curOz=null}}
+      else if(S.curOz){S.curOz.to=+v}
+      else if(S.last){OVZ.push({id:uid(),from:S.curRaw,to:+v,name:(A.cur.road||'Tronçon')+' · '+new Date().toLocaleDateString('fr-FR',{day:'numeric',month:'short'}),p:[[+S.last.lat.toFixed(5),+S.last.lon.toFixed(5),S.heading!=null&&S.speed>8?Math.round(S.heading):-1]]})}
+      ovzSave();renderOvr();
+      toast(v==='x'?'Correction retirée.':'Limite '+v+' retenue pour ce tronçon (TomTom : '+S.curRaw+').');
+      close();return;
+    }
     if(wid!=null){
       if(v==='x'){delete OVR[wid];delete OVN[wid]}else{OVR[wid]=+v;OVN[wid]=(A.cur.road||'Route sans nom')+' ('+(S.last?S.last.lat.toFixed(4)+', '+S.last.lon.toFixed(4):'')+')'}
       LS.set('ovr',OVR);LS.set('ovrn',OVN);renderOvr();
@@ -2113,6 +2138,25 @@ function startChooser(){
 /* ---------- limites TomTom en trajet libre (géocodage inverse, quota 20 000 / mois) ---------- */
 var TL={lim:null,road:null,at:0,pos:null,hd:null,busy:false,same:0,last:null,pend:null,trail:[],crumbs:[]};
 var TL_MAX=18000;
+/* corrections de tronçon : « ici, dans ce sens, quand TomTom dit X, c'est Y » ; la zone s'étend en roulant */
+var OVZ=LS.get('ovz',[]);if(!Array.isArray(OVZ))OVZ=[];
+function ovzSave(){LS.set('ovz',OVZ)}
+function ovzFind(f,raw){
+  var hd=S.speed>8?S.heading:null;
+  for(var i=0;i<OVZ.length;i++){var z=OVZ[i];if(z.from!==raw)continue;
+    for(var j=z.p.length-1;j>=0;j--){var q=z.p[j];if(Math.abs(q[0]-f.lat)>0.001||Math.abs(q[1]-f.lon)>0.0015)continue;
+      if(dist(f,{lat:q[0],lon:q[1]})<45&&(hd==null||q[2]<0||angDiff(q[2],hd)<50))return z}
+    /* trou de quelques secondes (GPS, recalcul) : on prolonge si l'on continue tout droit depuis la fin de la zone */
+    var e=z.p[z.p.length-1],de=dist(f,{lat:e[0],lon:e[1]});
+    if(hd!=null&&e[2]>=0&&de<250&&angDiff(e[2],hd)<35&&angDiff(bearing({lat:e[0],lon:e[1]},f),hd)<30)return z}
+  return null;
+}
+function ovzApply(f,raw){
+  var z=ovzFind(f,raw);if(!z)return null;
+  var l=z.p[z.p.length-1];
+  if(z.p.length<3000&&dist(f,{lat:l[0],lon:l[1]})>25){z.p.push([+f.lat.toFixed(5),+f.lon.toFixed(5),S.heading!=null&&S.speed>8?Math.round(S.heading):-1]);ovzSave()}
+  return z;
+}
 function no20(l){return l===20&&settings.no20!==false?30:l}
 function ttOnly(){return !!ttKey()&&settings.ttlim!==false}
 function tlCount(){var m=new Date().toISOString().slice(0,7),c=LS.get('ttrev',null);if(!c||c.m!==m)c={m:m,n:0};return c}
@@ -2199,7 +2243,9 @@ function ttLimit(f){
     var segOk=!best||sp<15||S.heading==null||dist({lat:P[best.i][0],lon:P[best.i][1]},{lat:P[best.i+1][0],lon:P[best.i+1][1]})<5||angDiff(bearing({lat:P[best.i][0],lon:P[best.i][1]},{lat:P[best.i+1][0],lon:P[best.i+1][1]}),S.heading)<60;
     if(best&&segOk&&best.d<=30+Math.min(30,f.acc||0)){
       on=true;pa.idx=best.i;pa.miss=0;
-      var lim=pa.L[best.i];
+      var here=pa.cum[best.i]+(pa.cum[best.i+1]-pa.cum[best.i])*best.t,lim=null;
+      for(var w=Math.max(0,best.i-40);w<Math.min(P.length,best.i+40);w++){if(pa.L[w]!=null&&pa.cum[w]>=here-100&&pa.cum[w]<=here+150&&(lim==null||pa.L[w]>lim))lim=pa.L[w]}
+      if(lim==null)lim=pa.L[best.i];
       if(lim!=null){TL.lim=lim;TL.road=pa.R[best.i]||TL.road;TL.last={lat:f.lat,lon:f.lon}}
       var rem=pa.cum[P.length-1]-(pa.cum[best.i]+(pa.cum[best.i+1]-pa.cum[best.i])*best.t);
       if(rem<350)refresh=true;
@@ -2229,9 +2275,10 @@ function ttLimit(f){
       var fx=TL.fix||f,bi=0,bd=1e9;for(var k4=0;k4<P.length;k4++){var dd=dist(fx,{lat:P[k4][0],lon:P[k4][1]});if(dd<bd){bd=dd;bi=k4}}
       /* contrôle (ponts, routes qui se croisent) : le tracé doit suivre nos dernières positions et partir dans notre sens */
       var bj=Math.min(P.length-1,bi+1),bi0=bj===bi?Math.max(0,bi-1):bi;
-      if(dist({lat:P[bi0][0],lon:P[bi0][1]},{lat:P[bj][0],lon:P[bj][1]})>5&&angDiff(bearing({lat:P[bi0][0],lon:P[bi0][1]},{lat:P[bj][0],lon:P[bj][1]}),hd)>50)return;
-      var far=0;pts.slice(0,-1).forEach(function(cp){var m=1e9;for(var k5=0;k5<=bi+1&&k5<P.length;k5++){var d5=dist(cp,{lat:P[k5][0],lon:P[k5][1]});if(d5<m)m=d5}if(m>45)far++});
-      if(far>1)return;
+      var fast=S.speed>=50;
+      if(fast&&dist({lat:P[bi0][0],lon:P[bi0][1]},{lat:P[bj][0],lon:P[bj][1]})>5&&angDiff(bearing({lat:P[bi0][0],lon:P[bi0][1]},{lat:P[bj][0],lon:P[bj][1]}),hd)>60)return;
+      var far=0;pts.slice(0,-1).forEach(function(cp){var m=1e9;for(var k5=0;k5<=bi+1&&k5<P.length;k5++){var d5=dist(cp,{lat:P[k5][0],lon:P[k5][1]});if(d5<m)m=d5}if(m>60)far++});
+      if(fast&&far>2)return;
       TL.path={P:P,cum:cum,L:L,R:R,idx:Math.max(0,bi-1),miss:0};
       if(L[bi]!=null){TL.lim=L[bi];TL.road=R[bi]||TL.road;TL.last={lat:fx.lat,lon:fx.lon}}
     }).catch(function(){clearTimeout(tmo)}).then(function(){TL.busy=false;tlUI()});
@@ -2240,12 +2287,12 @@ function ttLimit(f){
   A.cur.road=TL.road;A.cur.wid=ok;A.cur.lim=TL.lim;A.cur.src='tomtom';
   if(ok&&OVR[ok]!=null){A.cur.lim=OVR[ok];A.cur.src='corrigee';return {lim:OVR[ok],src:'corrigee'}}
   if(TL.lim==null)return null;
-  return {lim:no20(TL.lim),src:'tomtom'};
+  return {lim:no20(TL.lim),raw:TL.lim,src:'tomtom'};
 }
 /* ---------- sauvegarde / restauration du journal ---------- */
 function bakData(){
   var st=Object.assign({},settings);
-  return {app:'vigie-route',format:1,date:new Date().toISOString(),trips:trips,zones:zones,ovr:OVR,ovn:OVN,settings:st,
+  return {app:'vigie-route',format:1,date:new Date().toISOString(),trips:trips,zones:zones,ovr:OVR,ovn:OVN,ovz:OVZ,settings:st,
     route:{q:LS.get('rtq',null)},ttlc:TLC.cells};
 }
 function bakName(){var d=new Date();return 'vigie-sauvegarde-'+d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+'.json'}
@@ -2266,6 +2313,7 @@ function bakRestore(text){
   if(Array.isArray(d.zones)){var zk={};zones.forEach(function(z){zk[z.lat.toFixed(5)+','+z.lon.toFixed(5)]=1});
     d.zones.forEach(function(z){if(z&&okZone(z.lat,z.lon)&&!zk[z.lat.toFixed(5)+','+z.lon.toFixed(5)]){zones.push(z);nz++}});LS.set('zones',zones)}
   if(d.ovr&&typeof d.ovr==='object'){for(var k in d.ovr){if(OVR[k]==null){OVR[k]=d.ovr[k];if(d.ovn&&d.ovn[k])OVN[k]=d.ovn[k];no++}}LS.set('ovr',OVR);LS.set('ovn',OVN)}
+  if(Array.isArray(d.ovz)){var zi={};OVZ.forEach(function(z){zi[z.id]=1});d.ovz.forEach(function(z){if(z&&z.id&&!zi[z.id]&&Array.isArray(z.p)){OVZ.push(z);no++}});ovzSave()}
   if(d.ttlc&&typeof d.ttlc==='object'){for(var c in d.ttlc){if(!TLC.cells[c]&&Array.isArray(d.ttlc[c])){TLC.cells[c]=d.ttlc[c];TLC.n+=d.ttlc[c].length}}TLC.dirty=true;tlcSave()}
   if(d.settings&&typeof d.settings==='object'&&!LS.get('settings',null)){Object.assign(settings,d.settings);saveSettings()}
   renderJournal();renderZones();renderOvr();
@@ -2405,7 +2453,11 @@ function navTick(f){
   navRender();
   /* limitation TomTom de la portion où l'on roule */
   var lims=r.lims||[];
-  for(var k=0;k<lims.length;k++)if(m.i>=lims[k].beg&&m.i<lims[k].end)return {lim:no20(lims[k].lim),src:'itin'};
+  /* tolérance aux changements de limite : la position exacte du panneau dans les données TomTom peut varier de quelques
+     dizaines de mètres. On garde l'ancienne limite 100 m après une baisse, et la nouvelle s'applique 150 m avant une hausse (bretelles). */
+  var a0=NAV.off-0.1,a1=NAV.off+0.15,best=null;
+  for(var k=0;k<lims.length;k++){var c0=r.cum[lims[k].beg],c1=r.cum[Math.min(lims[k].end,r.cum.length-1)];if(c1>=a0&&c0<=a1&&(best==null||lims[k].lim>best))best=lims[k].lim}
+  if(best!=null)return {lim:no20(best),raw:best,src:'itin'};
   return null;
 }
 function navReroute(f){
