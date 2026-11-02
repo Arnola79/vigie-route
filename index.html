@@ -256,7 +256,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v46</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v47</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -910,6 +910,21 @@ function loadMem(key){
     else{delete T.idx[key];saveIdx();renderOffline()}
   }).catch(function(){T.loading[key]=false});
 }
+/* liste des radars préparée chaque semaine par GitHub (OpenStreetMap), gardée sur le téléphone */
+var RAD={list:[],at:0,busy:false};
+var RAD_URL='https://raw.githubusercontent.com/Arnola79/vigie-route/main/radars.json';
+idbGet('radars').then(function(v){if(v&&Array.isArray(v.list)){RAD.list=v.list;RAD.at=v.t||0;if(S.last)rebuildActive(S.last)}radFetch()}).catch(function(){radFetch()});
+function radFetch(){
+  if(RAD.busy||navigator.onLine===false||Date.now()-RAD.at<3*864e5)return;
+  RAD.busy=true;
+  fetchJson(RAD_URL+'?t='+Math.floor(Date.now()/36e5),30000).then(function(l){
+    if(Array.isArray(l)&&l.length>500){RAD.list=l;RAD.at=Date.now();idbPut('radars',{t:RAD.at,list:l}).catch(function(){});if(S.last)rebuildActive(S.last);renderCamStatus()}
+  }).catch(function(){}).then(function(){RAD.busy=false});
+}
+function radNear(f,out,seen){
+  var L=RAD.list;for(var i=0;i<L.length;i++){var r=L[i];if(Math.abs(r[1]-f.lat)>0.12||Math.abs(r[2]-f.lon)>0.16)continue;var id='osm'+r[0];if(seen[id])continue;seen[id]=1;
+    out.push({id:id,name:'Zone de danger (carte)',lat:r[1],lon:r[2],limit:r[3]||null,src:'osm'})}
+}
 function rebuildActive(f){
   var i0=Math.floor(f.lat/TL),j0=Math.floor(f.lon/TG),want={},ways=[],cams=[],pls=[],seenW={},seenC={},seenP={},now=Date.now();
   for(var di=-1;di<=1;di++){for(var dj=-1;dj<=1;dj++){
@@ -922,6 +937,7 @@ function rebuildActive(f){
     }else loadMem(k);
   }}
   Object.keys(T.mem).forEach(function(k){if(!want[k])delete T.mem[k]});
+  radNear(f,cams,seenC);
   A.ways=ways;A.cams=cams;A.pl=pls;T.key=i0+'_'+j0;
   saveIdx();renderOffline();
 }
@@ -969,7 +985,7 @@ function pump(){
 function tileTick(f){
   if(S.mode!=='live')return;
   if(EMBEDDED){warnMap("Carte indisponible : cette page est affichée dans une autre application (Claude), qui bloque l'accès réseau. Ouvrez le fichier hébergé en HTTPS dans Safari ou Chrome.");return}
-  if(tileKey(f.lat,f.lon)!==T.key)rebuildActive(f);
+  if(tileKey(f.lat,f.lon)!==T.key||!T.rpos||dist(T.rpos,f)>3000){T.rpos={lat:f.lat,lon:f.lon};rebuildActive(f)}
   var t=Date.now(),first=T.planAt===0;
   if(t-T.planAt>15000){
     T.planAt=t;
@@ -2180,7 +2196,8 @@ function ttLimit(f){
       var dx=bx-ax,dy=by-ay,L2=dx*dx+dy*dy,t=L2>0?clamp(-(ax*dx+ay*dy)/L2,0,1):0,d=Math.hypot(ax+t*dx,ay+t*dy);
       if(!best||d<best.d)best={d:d,i:i,t:t};
     }
-    if(best&&best.d<=30+Math.min(30,f.acc||0)){
+    var segOk=!best||sp<15||S.heading==null||dist({lat:P[best.i][0],lon:P[best.i][1]},{lat:P[best.i+1][0],lon:P[best.i+1][1]})<5||angDiff(bearing({lat:P[best.i][0],lon:P[best.i][1]},{lat:P[best.i+1][0],lon:P[best.i+1][1]}),S.heading)<60;
+    if(best&&segOk&&best.d<=30+Math.min(30,f.acc||0)){
       on=true;pa.idx=best.i;pa.miss=0;
       var lim=pa.L[best.i];
       if(lim!=null){TL.lim=lim;TL.road=pa.R[best.i]||TL.road;TL.last={lat:f.lat,lon:f.lon}}
@@ -2210,6 +2227,11 @@ function ttLimit(f){
       var ins=((rt.guidance&&rt.guidance.instructions)||[]).filter(function(x){return x.street&&x.pointIndex!=null}).sort(function(a,b){return a.pointIndex-b.pointIndex});
       var st=null,ii=0;for(var k3=0;k3<P.length;k3++){while(ii<ins.length&&ins[ii].pointIndex<=k3){st=ins[ii].street;ii++}R[k3]=st}
       var fx=TL.fix||f,bi=0,bd=1e9;for(var k4=0;k4<P.length;k4++){var dd=dist(fx,{lat:P[k4][0],lon:P[k4][1]});if(dd<bd){bd=dd;bi=k4}}
+      /* contrôle (ponts, routes qui se croisent) : le tracé doit suivre nos dernières positions et partir dans notre sens */
+      var bj=Math.min(P.length-1,bi+1),bi0=bj===bi?Math.max(0,bi-1):bi;
+      if(dist({lat:P[bi0][0],lon:P[bi0][1]},{lat:P[bj][0],lon:P[bj][1]})>5&&angDiff(bearing({lat:P[bi0][0],lon:P[bi0][1]},{lat:P[bj][0],lon:P[bj][1]}),hd)>50)return;
+      var far=0;pts.slice(0,-1).forEach(function(cp){var m=1e9;for(var k5=0;k5<=bi+1&&k5<P.length;k5++){var d5=dist(cp,{lat:P[k5][0],lon:P[k5][1]});if(d5<m)m=d5}if(m>45)far++});
+      if(far>1)return;
       TL.path={P:P,cum:cum,L:L,R:R,idx:Math.max(0,bi-1),miss:0};
       if(L[bi]!=null){TL.lim=L[bi];TL.road=R[bi]||TL.road;TL.last={lat:fx.lat,lon:fx.lon}}
     }).catch(function(){clearTimeout(tmo)}).then(function(){TL.busy=false;tlUI()});

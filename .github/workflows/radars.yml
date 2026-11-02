@@ -1,0 +1,25 @@
+name: Radars (OpenStreetMap)
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['tools/radars.py', '.github/workflows/radars.yml']
+permissions:
+  contents: write
+jobs:
+  radars:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Télécharger les radars
+        run: python3 tools/radars.py
+      - name: Enregistrer radars.json
+        run: |
+          if [ -n "$(git status --porcelain radars.json)" ]; then
+            git add radars.json
+            git -c user.name="github-actions" -c user.email="github-actions@users.noreply.github.com" commit -q -m "Radars mis à jour"
+            git pull -q --rebase origin main
+            git push origin HEAD:main
+          fi
