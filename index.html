@@ -256,7 +256,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v48</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v49</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -2248,7 +2248,7 @@ function ttLimit(f){
       if(lim==null)lim=pa.L[best.i];
       if(lim!=null){TL.lim=lim;TL.road=pa.R[best.i]||TL.road;TL.last={lat:f.lat,lon:f.lon}}
       var rem=pa.cum[P.length-1]-(pa.cum[best.i]+(pa.cum[best.i+1]-pa.cum[best.i])*best.t);
-      if(rem<350)refresh=true;
+      if(rem<(pa.cut?60:350))refresh=true;
     }else if(++pa.miss<2)on=true;
   }
   if(!on&&TL.last&&dist(TL.last,f)>600){TL.lim=null}
@@ -2279,7 +2279,22 @@ function ttLimit(f){
       if(fast&&dist({lat:P[bi0][0],lon:P[bi0][1]},{lat:P[bj][0],lon:P[bj][1]})>5&&angDiff(bearing({lat:P[bi0][0],lon:P[bi0][1]},{lat:P[bj][0],lon:P[bj][1]}),hd)>60)return;
       var far=0;pts.slice(0,-1).forEach(function(cp){var m=1e9;for(var k5=0;k5<=bi+1&&k5<P.length;k5++){var d5=dist(cp,{lat:P[k5][0],lon:P[k5][1]});if(d5<m)m=d5}if(m>60)far++});
       if(fast&&far>2)return;
-      TL.path={P:P,cum:cum,L:L,R:R,idx:Math.max(0,bi-1),miss:0};
+      /* le tracé reconstitué ne doit pas faire de détour par rapport à nos vraies positions */
+      var spanC=0;for(var k6=0;k6+2<pts.length;k6++)spanC+=dist(pts[k6],pts[k6+1]);
+      if(cum[bi]>spanC*1.35+50)return;
+      /* devant nous, on s'arrête à la première sortie ou au premier changement de direction : la suite n'est qu'une supposition
+         (le point visé tombe parfois dans une rue voisine et TomTom proposerait de sortir de l'autoroute) */
+      var GO={STRAIGHT:1,FOLLOW:1,DEPART:1,ARRIVE:1,ARRIVE_LEFT:1,ARRIVE_RIGHT:1,WAYPOINT_LEFT:1,WAYPOINT_RIGHT:1,WAYPOINT_REACHED:1,ENTER_MOTORWAY:1,ENTER_FREEWAY:1,ENTER_HIGHWAY:1};
+      var INS=(rt.guidance&&rt.guidance.instructions)||[];
+      var EXIT={TAKE_EXIT:1,MOTORWAY_EXIT_LEFT:1,MOTORWAY_EXIT_RIGHT:1,KEEP_LEFT:1,KEEP_RIGHT:1,BEAR_LEFT:1,BEAR_RIGHT:1,MAKE_UTURN:1};
+      /* nos positions vont tout droit mais le tracé reconstitué prend une sortie avant nous : c'est la route d'à côté */
+      var cp=pts.slice(0,-1),mid=cp[Math.floor(cp.length/2)],straight=cp.length>=3&&angDiff(bearing(cp[0],mid),bearing(mid,cp[cp.length-1]))<25;
+      var quick=S.speed>=60;
+      if(quick&&straight&&INS.some(function(x){return x.pointIndex!=null&&x.pointIndex>0&&x.pointIndex<=bi&&EXIT[x.maneuver]}))return;
+      var cut=P.length-1;INS.forEach(function(x){if(x.pointIndex!=null&&x.pointIndex>bi&&x.pointIndex<cut&&x.maneuver&&(quick?EXIT[x.maneuver]:x.maneuver==='MAKE_UTURN'))cut=x.pointIndex});
+      var wasCut=cut<P.length-1;
+      if(wasCut){P=P.slice(0,cut+1);cum=cum.slice(0,cut+1);L=L.slice(0,cut+1);R=R.slice(0,cut+1)}
+      TL.path={P:P,cum:cum,L:L,R:R,idx:Math.max(0,bi-1),miss:0,cut:wasCut};
       if(L[bi]!=null){TL.lim=L[bi];TL.road=R[bi]||TL.road;TL.last={lat:fx.lat,lon:fx.lon}}
     }).catch(function(){clearTimeout(tmo)}).then(function(){TL.busy=false;tlUI()});
   }
