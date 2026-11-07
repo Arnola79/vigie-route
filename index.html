@@ -256,7 +256,7 @@ input[type="text"],input[type="number"]{height:46px;width:100%;border-radius:8px
 <div class="app">
   <span id="signRef" aria-hidden="true">130</span>
   <header class="top">
-    <div class="brand"><b>Vigie</b><span>route · v49</span></div>
+    <div class="brand"><b>Vigie</b><span>route · v50</span></div>
     <div class="pill" id="gpsPill" data-s="idle"><i></i><span id="gpsTxt">Arrêté</span></div>
   </header>
 
@@ -2253,8 +2253,8 @@ function ttLimit(f){
   }
   if(!on&&TL.last&&dist(TL.last,f)>600){TL.lim=null}
   /* 2) demander à TomTom le tracé (derniers 200 m + environ 1 km devant) */
-  if((!on||refresh)&&span>=60&&!TL.busy&&now-TL.at>=4000&&navigator.onLine!==false&&c.n+ttUse('route')<TL_MAX&&(sp>3||TL.lim==null)){
-    TL.busy=true;TL.at=now;c.n++;LS.set('ttrev',c);
+  if((!on||refresh||TL.force)&&span>=60&&!TL.busy&&now-TL.at>=(TL.force?2000:4000)&&navigator.onLine!==false&&c.n+ttUse('route')<TL_MAX&&(sp>3||TL.lim==null)){
+    TL.busy=true;TL.at=now;TL.force=false;c.n++;LS.set('ttrev',c);
     var b0=cr[Math.max(0,cr.length-4)],hd=dist(b0,f)>15?bearing(b0,f):(S.heading!=null?S.heading:bearing(cr[0],f));
     var D=clamp(sp/3.6*45,600,2000),dest=projPt(f,hd,D);
     var pts=cr.slice();if(dist(pts[pts.length-1],f)>3)pts.push({lat:f.lat,lon:f.lon});pts.push(dest);
@@ -2291,9 +2291,24 @@ function ttLimit(f){
       var cp=pts.slice(0,-1),mid=cp[Math.floor(cp.length/2)],straight=cp.length>=3&&angDiff(bearing(cp[0],mid),bearing(mid,cp[cp.length-1]))<25;
       var quick=S.speed>=60;
       if(quick&&straight&&INS.some(function(x){return x.pointIndex!=null&&x.pointIndex>0&&x.pointIndex<=bi&&EXIT[x.maneuver]}))return;
+      /* voie d'insertion : nous roulons déjà vite et tout droit, mais le tracé nous fait arriver par la bretelle */
+      var ENTER={ENTER_MOTORWAY:1,ENTER_FREEWAY:1,ENTER_HIGHWAY:1,MERGE:1,MERGE_LEFT:1,MERGE_RIGHT:1};
+      if(quick&&straight&&INS.some(function(x){return x.pointIndex!=null&&x.pointIndex>0&&x.pointIndex<=bi+2&&(ENTER[x.maneuver]||EXIT[x.maneuver]||/^TURN|^SHARP|^ROUNDABOUT/.test(x.maneuver||''))}))return;
       var cut=P.length-1;INS.forEach(function(x){if(x.pointIndex!=null&&x.pointIndex>bi&&x.pointIndex<cut&&x.maneuver&&(quick?EXIT[x.maneuver]:x.maneuver==='MAKE_UTURN'))cut=x.pointIndex});
       var wasCut=cut<P.length-1;
       if(wasCut){P=P.slice(0,cut+1);cum=cum.slice(0,cut+1);L=L.slice(0,cut+1);R=R.slice(0,cut+1)}
+      /* forte baisse de limite à grande vitesse : on attend qu'un 2e tracé, calculé avec d'autres positions, la confirme
+         (une voie d'insertion ou une route parallèle donne sinon une fausse baisse) */
+      /* à vitesse de route, en ligne droite : un tracé qui tourne ou sort dans les 250 m est celui d'une route parallèle */
+      var TURNY=/^(TURN|SHARP|ROUNDABOUT|TAKE_EXIT|MOTORWAY_EXIT|KEEP|BEAR|MAKE_UTURN)/;
+      if(quick&&straight&&INS.some(function(x){return x.pointIndex!=null&&x.pointIndex>bi&&x.pointIndex<cum.length&&cum[x.pointIndex]-cum[bi]<250&&TURNY.test(x.maneuver||'')}))return;
+      /* une limite bien plus basse que la vitesse à laquelle on roule tout droit n'est pas adoptée sur un nouveau tracé */
+      if(quick&&straight&&TL.lim!=null&&L[bi]!=null&&L[bi]<TL.lim&&S.speed>L[bi]+30)return;
+      var tnow=Date.now();
+      if(quick&&TL.lim!=null&&L[bi]!=null&&L[bi]<=TL.lim-20){
+        if(!TL.drop||TL.drop.lim!==L[bi]||tnow-TL.drop.t>30000){TL.drop={lim:L[bi],t:tnow};TL.force=true;return}
+      }
+      TL.drop=null;
       TL.path={P:P,cum:cum,L:L,R:R,idx:Math.max(0,bi-1),miss:0,cut:wasCut};
       if(L[bi]!=null){TL.lim=L[bi];TL.road=R[bi]||TL.road;TL.last={lat:fx.lat,lon:fx.lon}}
     }).catch(function(){clearTimeout(tmo)}).then(function(){TL.busy=false;tlUI()});
